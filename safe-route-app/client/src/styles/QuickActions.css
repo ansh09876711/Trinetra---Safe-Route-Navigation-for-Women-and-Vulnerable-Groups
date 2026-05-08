@@ -1,0 +1,149 @@
+/* ── Quick Actions Hub ── */
+.quick-actions-container {
+  background: linear-gradient(135deg, #0e1119 0%, #1a1e2e 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  padding: 24px;
+  margin: 16px 0;
+  max-width: 100%;
+}
+
+.actions-header {
+  margin-bottom: 24px;
+  text-align: center;
+}
+
+.actions-header h3 {
+  font-size: 20px;
+  font-weight: 700;
+  color: #e8eaf0;
+  margin: 0 0 4px 0;
+}
+
+.actions-header p {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.actions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 16px;
+}
+
+.action-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  padding: 20px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.action-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--action-color);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 0;
+}
+
+.action-card:hover {
+  border-color: var(--action-color);
+  background: rgba(255, 255, 255, 0.08);
+  transform: translateY(-4px);
+}
+
+.action-card:hover::before {
+  opacity: 0.1;
+}
+
+.action-icon {
+  font-size: 36px;
+  z-index: 1;
+  transition: transform 0.3s ease;
+}
+
+.action-card:hover .action-icon {
+  transform: scale(1.15) rotate(5deg);
+}
+
+.action-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e8eaf0;
+  z-index: 1;
+}
+
+.action-desc {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+  z-index: 1;
+  line-height: 1.3;
+}
+
+.action-card:active {
+  transform: scale(0.95);
+}
+
+@media (max-width: 768px) {
+  .quick-actions-container {
+    padding: 16px;
+  }
+
+  .actions-grid {
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+    gap: 12px;
+  }
+
+  .action-card {
+    padding: 16px;
+    gap: 8px;
+  }
+
+  .action-icon {
+    font-size: 28px;
+  }
+
+  .action-label {
+    font-size: 12px;
+  }
+
+  .action-desc {
+    font-size: 10px;
+  }
+}
+
+@media (max-width: 480px) {
+  .actions-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .action-card {
+    padding: 12px;
+  }
+
+  .action-icon {
+    font-size: 24px;
+  }
+
+  .action-label {
+    font-size: 11px;
+  }
+
+  .action-desc {
+    display: none;
+  }
+}

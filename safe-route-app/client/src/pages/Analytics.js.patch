@@ -1,0 +1,15 @@
+*** Begin Patch
+*** Update File: c:\Users\ANSH AGARWAL\Desktop\BGI-Hackathon\safe-route-app\client\src\pages\Analytics.js
+@@
+-import { useState, useEffect } from "react";
+-import { Link } from "react-router-dom";
+-import { FaBars } from "react-icons/fa";
+-import Logo from "../components/Logo";
+-import "./Dashboard.css";
++import { useState, useEffect } from "react";
++import { Link } from "react-router-dom";
++import { FaBars } from "react-icons/fa";
++import Logo from "../components/Logo";
++import SafetyScore from "../components/SafetyScore";
++import "./Dashboard.css";
+*** End Patch

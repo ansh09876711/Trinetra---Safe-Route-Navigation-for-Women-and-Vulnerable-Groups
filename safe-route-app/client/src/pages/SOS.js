@@ -1,8 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
-import { FaBars, FaTrash, FaPlus, FaPhone, FaWhatsapp, FaMapMarkerAlt, FaShieldAlt, FaHistory, FaInfoCircle } from "react-icons/fa";
+import { FaBars, FaTrash, FaPlus, FaPhone, FaWhatsapp, FaMapMarkerAlt, FaShieldAlt, FaHistory, FaInfoCircle, FaEye, FaEyeSlash } from "react-icons/fa";
+import { db, auth } from "../firebase";
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import Logo from "../components/Logo";
 import Sidebar from "../components/Sidebar";
+import MobileSOS from "./MobileSOS";
 import "./Dashboard.css";
 import "./SOS.css";
 
@@ -20,6 +23,9 @@ export default function SOS() {
   const [contacts, setContacts] = useState([]);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
+  const [type, setType] = useState("Family Member");
+  const [permissions, setPermissions] = useState(JSON.parse(localStorage.getItem("trinetra_permissions") || "{}"));
   const [message, setMessage] = useState("Emergency! I need help. This is my live location:");
   const [location, setLocation] = useState(null);
   const [locLoading, setLocLoading] = useState(false);
@@ -36,10 +42,19 @@ export default function SOS() {
   const [sirenGain, setSirenGain] = useState(null);
   const [showStopModal, setShowStopModal] = useState(false);
   const [stopPasswordInput, setStopPasswordInput] = useState("");
-  const [sirenPassword] = useState("1234");
+  const [showStopPass, setShowStopPass] = useState(false);
+  const [sirenPassword] = useState(localStorage.getItem("trinetra_siren_password") || "1234");
 
   const loggedInUser = JSON.parse(localStorage.getItem("trinetra_user") || "{}");
   const userInitials = (loggedInUser.name || "U").split(" ").map(n => n[0]).join("").toUpperCase();
+
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+  useEffect(() => {
+    const checkRes = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', checkRes);
+    return () => window.removeEventListener('resize', checkRes);
+  }, []);
 
   useEffect(() => {
     try {
@@ -67,12 +82,44 @@ export default function SOS() {
   };
 
   const addContact = () => {
-    if (!name.trim() || !phone.trim()) return showToast("Name aur Phone daalo", "danger");
-    const updated = [{ id: Date.now(), name, phone }, ...contacts];
+    if (!name.trim() || !phone.trim()) return showToast("Name aur Mobile daalo", "danger");
+    const contactId = Date.now();
+    const updated = [
+      { 
+        id: contactId, 
+        name: name.trim(), 
+        phone: phone.trim(), 
+        whatsapp: whatsapp.trim() || phone.trim(),
+        type: type 
+      }, 
+      ...contacts
+    ];
     setContacts(updated);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    setName(""); setPhone("");
-    showToast(`${name} add ho gaya!`, "success");
+    
+    // Auto WhatsApp Invite Link
+    const portalUrl = `${window.location.origin}/guardian?userId=${loggedInUser.id}&contactId=${contactId}`;
+    const inviteMsg = encodeURIComponent(`Hi ${name}, I've added you as my Emergency Contact on TRINETRA. Please click here to monitor my safety: ${portalUrl}`);
+    window.open(`https://wa.me/${(whatsapp || phone).replace(/\D/g, "")}?text=${inviteMsg}`, '_blank');
+
+    setName(""); setPhone(""); setWhatsapp(""); setType("Family Member");
+    showToast(`${name} add ho gaya! WhatsApp link sent.`, "success");
+  };
+
+  const togglePermission = async (contactId) => {
+    const newVal = !permissions[contactId];
+    const updated = { ...permissions, [contactId]: newVal };
+    setPermissions(updated);
+    localStorage.setItem("trinetra_permissions", JSON.stringify(updated));
+    
+    // Sync with backend
+    try {
+        await fetch('http://localhost:5005/api/sos/permission', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contactId, allowed: newVal })
+        });
+    } catch (e) {}
   };
 
   const deleteContact = (id) => {
@@ -260,14 +307,31 @@ export default function SOS() {
       const newReport = {
         id: Date.now(),
         timestamp: new Date().toISOString(),
+        type: "SOS",
+        status: "ACTIVE",
         lat: lat,
         lng: lng,
         locationName: locName,
         message: message,
-        userName: loggedInUser.name || "TRINETRA User"
+        userName: loggedInUser.name || "TRINETRA User",
+        userMobile: loggedInUser.mobile || "N/A"
       };
       
       localStorage.setItem('trinetra_sos_reports', JSON.stringify([...savedReports, newReport]));
+      
+      // 3.5 SYNC SOS REPORT TO BACKEND (Now using Firebase!)
+      try {
+        console.log("🔥 Syncing SOS to Firebase...");
+        await addDoc(collection(db, "reports"), {
+            ...newReport,
+            userId: loggedInUser.uid || loggedInUser.id,
+            createdAt: serverTimestamp()
+        });
+        console.log("✅ SOS Saved to Firestore!");
+      } catch (e) {
+        console.error("❌ Firebase Sync Failed:", e);
+      }
+      
       showToast("Official Incident Report Generated! 📄", "success");
 
       // 4. Update UI Location
@@ -315,6 +379,10 @@ export default function SOS() {
     }
   };
 
+  if (isMobile) {
+    return <MobileSOS user={loggedInUser} onLogout={() => { localStorage.removeItem("trinetra_user"); window.location.href="/"; }} />;
+  }
+
   return (
     <div className="nr-root">
       <header className="nr-topbar">
@@ -342,26 +410,90 @@ export default function SOS() {
         {/* Left Side: Contacts */}
         <aside className="sos-side-panel">
           <div className="glass-card" style={{ padding: "20px" }}>
-            <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 15, color: "var(--accent)" }}>Emergency Contacts</h3>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 700, color: "var(--accent)" }}>Emergency Contacts</h3>
+            </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
               <input value={name} onChange={e => setName(e.target.value)} placeholder="Full Name" 
                 style={{ background: "var(--bg)", border: "1px solid var(--border)", padding: "10px", borderRadius: 8, color: "#fff", fontSize: 13 }} />
+              
               <div style={{ display: "flex", gap: 8 }}>
-                <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="Phone Number" 
+                <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="Mobile Number" 
                   style={{ flex: 1, background: "var(--bg)", border: "1px solid var(--border)", padding: "10px", borderRadius: 8, color: "#fff", fontSize: 13 }} />
-                <button onClick={addContact} style={{ background: "var(--accent)", color: "#fff", border: "none", padding: "0 15px", borderRadius: 8, cursor: "pointer" }}><FaPlus /></button>
+                <input value={whatsapp} onChange={e => setWhatsapp(e.target.value)} placeholder="WhatsApp (Optional)" 
+                  style={{ flex: 1, background: "rgba(37,211,102,0.05)", border: "1px solid rgba(37,211,102,0.2)", padding: "10px", borderRadius: 8, color: "#25D366", fontSize: 13 }} />
+              </div>
+
+              <div style={{ display: "flex", gap: 8 }}>
+                <select 
+                  value={type} 
+                  onChange={e => setType(e.target.value)}
+                  style={{ flex: 1, background: "var(--bg)", border: "1px solid var(--border)", padding: "10px", borderRadius: 8, color: "#fff", fontSize: 13, outline: 'none' }}
+                >
+                  <option value="Family Member">Family Member</option>
+                  <option value="Friend">Friend</option>
+                  <option value="Colleague">Colleague</option>
+                  <option value="Other">Other</option>
+                </select>
+                <button onClick={addContact} style={{ background: "var(--accent)", color: "#000", border: "none", padding: "0 20px", borderRadius: 8, cursor: "pointer", fontWeight: 700 }}>ADD</button>
               </div>
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: "350px", overflowY: "auto" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: "350px", overflowY: "auto", borderTop: '1px solid var(--border)', paddingTop: 15 }}>
               {contacts.map(c => (
-                <div key={c.id} className="sos-contact-card">
-                  <div className="sb-avatar" style={{ width: 32, height: 32, fontSize: 12 }}>{c.name[0]}</div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600 }}>{c.name}</div>
-                    <div style={{ fontSize: 10, color: "var(--text3)" }}>{c.phone}</div>
+                <div key={c.id} className="sos-contact-card" style={{ background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)', flexDirection: 'column', alignItems: 'flex-start' }}>
+                  <div style={{ display: 'flex', width: '100%', alignItems: 'center', gap: 12 }}>
+                    <div className="sb-avatar" style={{ width: 32, height: 32, fontSize: 12, background: 'var(--accent)', color: 'black' }}>{c.name[0]}</div>
+                    <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700 }}>{c.name} <span style={{ fontSize: 9, color: 'var(--text3)', fontWeight: 400 }}>({c.type})</span></div>
+                        <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>📞 {c.phone}</div>
+                        <div style={{ fontSize: 10, color: "#25D366" }}>💬 {c.whatsapp}</div>
+                        </div>
+                    </div>
+                    <button onClick={() => deleteContact(c.id)} style={{ background: "none", border: "none", color: "var(--danger)", cursor: "pointer" }}><FaTrash size={12} /></button>
                   </div>
-                  <button onClick={() => deleteContact(c.id)} style={{ background: "none", border: "none", color: "var(--danger)", cursor: "pointer" }}><FaTrash size={12} /></button>
+                  
+                  <div style={{ width: '100%', marginTop: 10, display: 'flex', gap: 10 }}>
+                    <button 
+                        onClick={() => {
+                            const firebaseUid = auth.currentUser?.uid || JSON.parse(localStorage.getItem("trinetra_user"))?.id || "unknown";
+                            
+                            if (firebaseUid === "unknown") {
+                                showToast("Error: Identity not verified. Please re-login.", "danger");
+                                return;
+                            }
+
+                            const portalUrl = `${window.location.origin}/guardian?userId=${firebaseUid}&contactId=${c.id}`;
+                            const inviteMsg = encodeURIComponent(`🚨 TRINETRA SOS: I am in an emergency. Please track my live location and safety reports here: ${portalUrl}`);
+                            window.open(`https://wa.me/${(c.whatsapp || c.phone).replace(/\D/g, "")}?text=${inviteMsg}`, '_blank');
+                        }}
+                        style={{ flex: 1, background: 'rgba(37,211,102,0.1)', border: '1px solid rgba(37,211,102,0.3)', color: '#25D366', fontSize: 9, padding: '5px', borderRadius: 8, cursor: 'pointer', fontWeight: 700 }}
+                    >
+                        SEND INVITE LINK 💬
+                    </button>
+                    <button 
+                        onClick={() => togglePermission(c.id)}
+                        style={{ 
+                            flex: 1,
+                            background: permissions[c.id] !== false ? 'rgba(34,197,94,0.15)' : 'rgba(255,255,255,0.05)', 
+                            border: permissions[c.id] !== false ? '1px solid #22c55e' : '1px solid var(--border)', 
+                            padding: '10px', borderRadius: 12, 
+                            color: permissions[c.id] !== false ? '#22c55e' : 'var(--text3)', 
+                            fontSize: 10, fontWeight: 800, cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                            transition: 'all 0.3s ease'
+                        }}
+                    >
+                        <span style={{ 
+                            width: 6, height: 6, borderRadius: '50%', 
+                            background: permissions[c.id] !== false ? '#22c55e' : '#666',
+                            boxShadow: permissions[c.id] !== false ? '0 0 10px #22c55e' : 'none',
+                            animation: permissions[c.id] !== false ? 'pulse 1.5s infinite' : 'none'
+                        }} />
+                        LIVE: {permissions[c.id] !== false ? "ON" : "OFF"}
+                    </button>
+                  </div>
                 </div>
               ))}
               {contacts.length === 0 && <div style={{ textAlign: "center", color: "var(--text3)", fontSize: 11, padding: "20px" }}>No contacts added.</div>}
@@ -465,19 +597,24 @@ export default function SOS() {
       )}
 
       {/* Siren Stop Modal */}
-      {showStopModal && (
+      {sirenPlaying && (
         <div style={{ position: "fixed", inset: 0, zIndex: 20000, background: "rgba(0,0,0,0.9)", display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(15px)" }}>
           <div className="glass-card" style={{ width: 320, padding: 30, textAlign: "center", border: "1px solid var(--danger)" }}>
             <div style={{ fontSize: 40, marginBottom: 15 }}>🛑</div>
             <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 10 }}>STOP SIREN</h3>
             <p style={{ fontSize: 12, color: "var(--text3)", marginBottom: 20 }}>Enter security password to deactivate emergency alerts.</p>
-            <input 
-              type="password" 
-              value={stopPasswordInput} 
-              onChange={e => setStopPasswordInput(e.target.value)}
-              placeholder="Enter Password (1234)"
-              style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", padding: "12px", borderRadius: 10, color: "#fff", textAlign: "center", fontSize: 16, letterSpacing: 4, marginBottom: 20 }}
-            />
+            <div style={{ position: 'relative', width: '100%', marginBottom: '20px' }}>
+              <input 
+                type={showStopPass ? "text" : "password"} 
+                value={stopPasswordInput} 
+                onChange={e => setStopPasswordInput(e.target.value)}
+                placeholder="Enter Password (1234)"
+                style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", padding: "12px", paddingRight: "45px", borderRadius: 10, color: "#fff", textAlign: "center", fontSize: 16, letterSpacing: showStopPass ? 0 : 4 }}
+              />
+              <div onClick={() => setShowStopPass(!showStopPass)} style={{ position: 'absolute', right: '15px', top: '50%', transform: 'translateY(-50%)', cursor: 'pointer', color: 'var(--accent)', fontSize: '18px' }}>
+                {showStopPass ? <FaEyeSlash /> : <FaEye />}
+              </div>
+            </div>
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={() => setShowStopModal(false)} style={{ flex: 1, padding: "12px", background: "var(--bg3)", color: "#fff", border: "none", borderRadius: 10, cursor: "pointer" }}>Cancel</button>
               <button onClick={stopSiren} style={{ flex: 1, padding: "12px", background: "var(--danger)", color: "#fff", border: "none", borderRadius: 10, cursor: "pointer", fontWeight: 700 }}>STOP</button>
@@ -485,17 +622,6 @@ export default function SOS() {
           </div>
         </div>
       )}
-
-      {/* Mobile Nav */}
-      <nav className="mobile-bottom-nav">
-        <Link to="/dashboard" className="mob-tab"><span className="mob-tab-icon">🏠</span><span className="mob-tab-label">Home</span></Link>
-        <Link to="/stations" className="mob-tab"><span className="mob-tab-icon">🚉</span><span className="mob-tab-label">Help</span></Link>
-        <div className="mob-tab" onClick={triggerSOS} style={{ background: "linear-gradient(135deg, #ff4d4d, #cc0000)", color: "#fff", borderRadius: "50%", transform: "translateY(-20px)", height: 65, width: 65, flex: "none", boxShadow: "0 8px 25px rgba(255,45,45,0.4)" }}>
-          <span className="mob-tab-icon" style={{ fontSize: 30 }}>🆘</span>
-        </div>
-        <Link to="/history" className="mob-tab"><span className="mob-tab-icon">📜</span><span className="mob-tab-label">History</span></Link>
-        <Link to="/profile" className="mob-tab"><span className="mob-tab-icon">👤</span><span className="mob-tab-label">Profile</span></Link>
-      </nav>
 
       {/* Toast */}
       {toast && (

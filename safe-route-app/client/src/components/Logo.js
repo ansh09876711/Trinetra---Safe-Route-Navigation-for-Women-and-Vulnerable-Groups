@@ -5,18 +5,18 @@ const Logo = ({ height = 32, showText = true }) => {
   return (
     <div style={{ 
       display: 'flex', 
+      flexDirection: 'row',
       alignItems: 'center', 
-      gap: 0,
-      cursor: 'pointer'
+      gap: 8,
+      cursor: 'pointer',
     }}>
-      {/* New Logo Image - Significantly Increased Size */}
+      {/* Logo Image — same visual size as text */}
       <div style={{ 
-        height: height * 3.0, 
+        height: height * 2.5, 
         display: 'flex', 
         alignItems: 'center', 
         justifyContent: 'center',
         flexShrink: 0,
-        marginRight: -15 // Pull text closer to the actual logo content
       }}>
         <img 
           src={logoImg} 
@@ -24,7 +24,7 @@ const Logo = ({ height = 32, showText = true }) => {
           style={{ 
             height: '100%', 
             width: 'auto',
-            filter: 'drop-shadow(0 0 15px rgba(212, 175, 55, 0.45))' 
+            filter: 'drop-shadow(0 0 10px rgba(212, 175, 55, 0.5))' 
           }} 
         />
       </div>
@@ -35,7 +35,7 @@ const Logo = ({ height = 32, showText = true }) => {
             fontWeight: 800, 
             fontSize: height * 0.75,
             letterSpacing: '0.05em',
-            background: 'linear-gradient(to bottom, #FFD700, #B8860B)', // Golden gradient to match logo
+            background: 'linear-gradient(to bottom, #FFD700, #B8860B)',
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent',
             fontFamily: "'Space Grotesk', sans-serif",
@@ -45,10 +45,10 @@ const Logo = ({ height = 32, showText = true }) => {
           </span>
           <span style={{ 
             fontSize: height * 0.22, 
-            color: '#D4AF37', // Gold color
+            color: '#D4AF37',
             fontWeight: 600, 
             letterSpacing: '0.2em',
-            marginTop: 4,
+            marginTop: 3,
             textTransform: 'uppercase',
             opacity: 0.8
           }}>

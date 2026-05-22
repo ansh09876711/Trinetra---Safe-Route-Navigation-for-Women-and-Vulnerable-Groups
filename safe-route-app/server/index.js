@@ -2,9 +2,55 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const db = require('./db');
+let nodemailer;
+try { nodemailer = require('nodemailer'); } catch (e) { console.warn("Nodemailer not found, real emails disabled."); }
 require('dotenv').config();
 
 const app = express();
+const PORT = process.env.PORT || 5005;
+
+// --- Nodemailer Transporter ---
+let transporter;
+if (nodemailer) {
+  transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false, // Use STARTTLS
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS
+    },
+    tls: {
+      rejectUnauthorized: false // Helps in restricted networks
+    }
+  });
+
+  transporter.verify(function (error, success) {
+    if (error) {
+      console.log("[SMTP] Connection Error:", error);
+    } else {
+      console.log("[SMTP] Server is ready to send emails via Port 587");
+    }
+  });
+}
+
+app.use(cors());
+app.use(bodyParser.json());
+
+// --- In-Memory Storage for OTPs (Production would use Redis/DB) ---
+const otpStorage = new Map();
+
+// --- AUTO DB FIX (Ensure mobile column exists) ---
+async function ensureColumns() {
+  try {
+    await db.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS mobile VARCHAR(20)');
+    console.log("[DB] Users table schema verified.");
+  } catch (err) {
+    console.error("[DB] Schema Error:", err.message);
+  }
+}
+ensureColumns();
+
 // Get saved places
 app.get("/saved-places/:user_id", async (req, res) => {
   const { user_id } = req.params;
@@ -32,13 +78,6 @@ app.post("/saved-places", async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 5000;
-
-app.use(cors());
-app.use(bodyParser.json());
-
-// --- Routes ---
-
 // Health Check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'Server is running' });
@@ -46,14 +85,14 @@ app.get('/api/health', (req, res) => {
 
 // Users Routes
 app.post('/api/users/register', async (req, res) => {
-  const { name, email, password } = req.body;
-  if (!name || !email || !password) {
+  const { name, email, mobile, password } = req.body;
+  if (!name || !email || !mobile || !password) {
     return res.status(400).json({ error: 'All fields are required' });
   }
   try {
     const result = await db.query(
-      'INSERT INTO users (name, email, password) VALUES ($1, $2, $3) RETURNING id, name, email',
-      [name, email, password]
+      'INSERT INTO users (name, email, mobile, password) VALUES ($1, $2, $3, $4) RETURNING id, name, email, mobile',
+      [name, email, mobile, password]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -70,7 +109,7 @@ app.post('/api/users/login', async (req, res) => {
   const { email, password } = req.body;
   try {
     const result = await db.query(
-      'SELECT id, name, email FROM users WHERE email = $1 AND password = $2',
+      'SELECT id, name, email, mobile FROM users WHERE email = $1 AND password = $2',
       [email, password]
     );
     if (result.rows.length > 0) {
@@ -85,6 +124,22 @@ app.post('/api/users/login', async (req, res) => {
 });
 
 // Routes (Navigation)
+app.post('/api/sos/report', (req, res) => {
+  const report = { ...req.body, id: Date.now(), timestamp: new Date() };
+  console.log(`[SOS] New Report Received for User: ${req.body.userId}`);
+  sosReports.push(report);
+  // Mark as live event for guardians
+  liveSOSEvents.set(req.body.userId.toString(), report);
+  res.json({ success: true, report });
+});
+
+app.get('/api/sos/history/:userId', (req, res) => {
+  const { userId } = req.params;
+  console.log(`[SOS] Fetching History for User: ${userId}`);
+  const userReports = sosReports.filter(r => r.userId == userId);
+  res.json(userReports);
+});
+
 app.get('/api/routes', async (req, res) => {
   try {
     const result = await db.query('SELECT * FROM routes ORDER BY created_at DESC');
@@ -147,23 +202,23 @@ app.post('/api/alerts', async (req, res) => {
 // Source: data.gov.in, NCRB Annual Reports, UN Habitat Safe Cities data
 const STATIC_CRIME_ZONES = [
   // RED zones — historically high crime (chain snatching, assault, kidnapping)
-  { lat: 23.2599, lng: 77.4126, label: "TT Nagar Area", risk: "red",  crimeType: "Chain Snatching, Robbery",    source: "NCRB", count: 18 },
-  { lat: 23.2700, lng: 77.4000, label: "Old Bhopal Market", risk: "red", crimeType: "Theft, Harassment",         source: "NCRB", count: 15 },
+  { lat: 23.2599, lng: 77.4126, label: "TT Nagar Area", risk: "red", crimeType: "Chain Snatching, Robbery", source: "NCRB", count: 18 },
+  { lat: 23.2700, lng: 77.4000, label: "Old Bhopal Market", risk: "red", crimeType: "Theft, Harassment", source: "NCRB", count: 15 },
   { lat: 23.2550, lng: 77.4050, label: "Bhopal Railway Station", risk: "red", crimeType: "Robbery, Kidnapping", source: "NCRB", count: 22 },
-  { lat: 23.2430, lng: 77.4200, label: "Peer Gate Area",  risk: "red",  crimeType: "Chain Snatching",            source: "NCRB", count: 12 },
-  { lat: 23.2320, lng: 77.4310, label: "Budhwara Area",   risk: "red",  crimeType: "Assault, Theft",             source: "NCRB", count: 14 },
+  { lat: 23.2430, lng: 77.4200, label: "Peer Gate Area", risk: "red", crimeType: "Chain Snatching", source: "NCRB", count: 12 },
+  { lat: 23.2320, lng: 77.4310, label: "Budhwara Area", risk: "red", crimeType: "Assault, Theft", source: "NCRB", count: 14 },
 
   // YELLOW zones — moderate crime
-  { lat: 23.2580, lng: 77.4280, label: "Habibganj",       risk: "yellow", crimeType: "Snatching",               source: "NCRB", count: 7  },
-  { lat: 23.2470, lng: 77.4090, label: "Shahjahanabad",   risk: "yellow", crimeType: "Eve Teasing",             source: "NCRB", count: 6  },
-  { lat: 23.2400, lng: 77.4180, label: "Sadar Manzil",    risk: "yellow", crimeType: "Theft",                   source: "NCRB", count: 5  },
-  { lat: 23.2650, lng: 77.4350, label: "Karond Area",     risk: "yellow", crimeType: "Night Harassment",        source: "NCRB", count: 8  },
-  { lat: 23.2150, lng: 77.4500, label: "Govindpura",      risk: "yellow", crimeType: "Snatching",               source: "NCRB", count: 6  },
+  { lat: 23.2580, lng: 77.4280, label: "Habibganj", risk: "yellow", crimeType: "Snatching", source: "NCRB", count: 7 },
+  { lat: 23.2470, lng: 77.4090, label: "Shahjahanabad", risk: "yellow", crimeType: "Eve Teasing", source: "NCRB", count: 6 },
+  { lat: 23.2400, lng: 77.4180, label: "Sadar Manzil", risk: "yellow", crimeType: "Theft", source: "NCRB", count: 5 },
+  { lat: 23.2650, lng: 77.4350, label: "Karond Area", risk: "yellow", crimeType: "Night Harassment", source: "NCRB", count: 8 },
+  { lat: 23.2150, lng: 77.4500, label: "Govindpura", risk: "yellow", crimeType: "Snatching", source: "NCRB", count: 6 },
 
   // GREEN zones — historically safe (near police/hospitals)
-  { lat: 23.2333, lng: 77.4340, label: "Habibganj Police", risk: "green", crimeType: "Low Crime",               source: "NCRB", count: 1  },
-  { lat: 23.2520, lng: 77.4280, label: "Kolar Residential", risk: "green", crimeType: "Residential Area",       source: "NCRB", count: 2  },
-  { lat: 23.2220, lng: 77.3900, label: "AIIMS Campus Area", risk: "green", crimeType: "Institutional Zone",     source: "NCRB", count: 1  },
+  { lat: 23.2333, lng: 77.4340, label: "Habibganj Police", risk: "green", crimeType: "Low Crime", source: "NCRB", count: 1 },
+  { lat: 23.2520, lng: 77.4280, label: "Kolar Residential", risk: "green", crimeType: "Residential Area", source: "NCRB", count: 2 },
+  { lat: 23.2220, lng: 77.3900, label: "AIIMS Campus Area", risk: "green", crimeType: "Institutional Zone", source: "NCRB", count: 1 },
 ];
 
 // In-memory SOS location log (fallback when DB table doesn't exist yet)
@@ -194,8 +249,8 @@ app.post('/api/sos-location', async (req, res) => {
 // Helper: Haversine distance in km
 function haversineKm(lat1, lng1, lat2, lng2) {
   const R = 6371, dLat = (lat2 - lat1) * Math.PI / 180, dLng = (lng2 - lng1) * Math.PI / 180;
-  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 // GET /api/crime-zones — combined SOS + NCRB data
@@ -241,8 +296,8 @@ app.get('/api/crime-zones', async (req, res) => {
         ...z,
         distance: haversineKm(userLat, userLng, z.lat, z.lng)
       }))
-      .sort((a, b) => a.distance - b.distance)
-      .filter(z => z.distance <= 15); // Show zones within 15km of live location
+        .sort((a, b) => a.distance - b.distance)
+        .filter(z => z.distance <= 15); // Show zones within 15km of live location
     }
 
     res.json({ zones: allZones, total: allZones.length });
@@ -259,10 +314,83 @@ app.get('/api/zone-stats', async (req, res) => {
     sosCount = parseInt(r.rows[0].count);
   } catch { sosCount = sosLocationLog.length; }
 
-  const red    = STATIC_CRIME_ZONES.filter(z => z.risk === "red").length;
+  const red = STATIC_CRIME_ZONES.filter(z => z.risk === "red").length;
   const yellow = STATIC_CRIME_ZONES.filter(z => z.risk === "yellow").length;
-  const green  = STATIC_CRIME_ZONES.filter(z => z.risk === "green").length;
+  const green = STATIC_CRIME_ZONES.filter(z => z.risk === "green").length;
   res.json({ red, yellow, green, totalSOS: sosCount, source: "NCRB + TRINETRA" });
+});
+
+// ── OTP System (Simulated Backend) ──
+app.post('/api/otp/send', (req, res) => {
+  const { type, value } = req.body;
+  if (!value) return res.status(400).json({ error: "Value required" });
+
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const expires = Date.now() + 120000; // 2 mins
+
+  otpStorage.set(value, { otp, expires });
+
+  // 1. SEND RESPONSE IMMEDIATELY (Instant performance)
+  res.json({ success: true, otp });
+
+  // 2. BACKGROUND WORK (Email dispatch doesn't block the response)
+  const channel = type === 'email' ? '📧 GMAIL' : '💬 SMS';
+  console.log(`[OTP SERVICE] Background processing for ${channel}: ${value} | CODE: ${otp}`);
+
+  if (type === 'email' && transporter) {
+    const mailOptions = {
+      from: `"TRINETRA Safety" <${process.env.EMAIL_USER}>`,
+      to: value,
+      subject: '🛡️ TRINETRA Security: Your OTP Code',
+      html: `
+        <div style="font-family: sans-serif; padding: 20px; background: #0a0f19; color: white; border-radius: 15px; border: 1px solid #00d2ff;">
+          <h2 style="color: #00d2ff;">TRINETRA Safety Verification</h2>
+          <p>Your 6-digit OTP code is:</p>
+          <h1 style="letter-spacing: 10px; color: #fff; background: rgba(255,255,255,0.1); padding: 20px; display: inline-block; border-radius: 10px; border: 1px dashed #00d2ff;">${otp}</h1>
+          <p style="color: #888; font-size: 12px;">This code will expire in 2 minutes.</p>
+        </div>
+      `
+    };
+
+    transporter.sendMail(mailOptions, (error, info) => {
+      if (error) {
+        console.log("\n❌ [EMAIL FAILED] " + new Date().toLocaleTimeString());
+        console.log("Error Details:", error.message);
+        console.log("To:", value);
+        console.log("------------------------------------------\n");
+      } else {
+        console.log("\n✅ [EMAIL DELIVERED] " + new Date().toLocaleTimeString());
+        console.log("Response:", info.response);
+        console.log("To:", value);
+        console.log("------------------------------------------\n");
+      }
+    });
+  }
+});
+
+app.post('/api/otp/verify', (req, res) => {
+  const { value, otp } = req.body;
+
+  // FAILSAFE: Allow master OTP '123456' for demo/emergency purposes
+  if (otp === '123456') {
+    otpStorage.delete(value);
+    return res.json({ success: true, message: "Verified via Master OTP" });
+  }
+
+  const stored = otpStorage.get(value);
+  if (!stored) return res.status(400).json({ error: "No OTP requested for this value" });
+
+  if (Date.now() > stored.expires) {
+    otpStorage.delete(value);
+    return res.status(400).json({ error: "OTP Expired" });
+  }
+
+  if (stored.otp === otp) {
+    otpStorage.delete(value);
+    res.json({ success: true });
+  } else {
+    res.status(400).json({ error: "Invalid OTP" });
+  }
 });
 
 // ── SOS Background Alert Simulation ──────────────────────────
@@ -271,13 +399,13 @@ app.post("/api/send-sos-alerts", (req, res) => {
   console.log(`[SOS ALERT] Sending background messages for User ${user_id}`);
   console.log(`[SMS/WhatsApp] Recipients: ${contacts.join(", ")}`);
   console.log(`[Message Content]: ${message}`);
-  
+
   // In a real production app, we would use Twilio API here:
   // client.messages.create({ body: message, from: 'whatsapp:+14155238886', to: 'whatsapp:'+contact })
-  
+
   res.json({ success: true, status: "Alerts sent to background queue" });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${PORT} (Network accessible)`);
 });

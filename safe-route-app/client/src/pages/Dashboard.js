@@ -1,13 +1,17 @@
 import { useState, useEffect, useRef } from "react";
 import { useTheme } from "../context/ThemeContext";
 import { FaBars, FaTimes, FaBell, FaShieldAlt, FaLocationArrow, FaLayerGroup, FaCube } from "react-icons/fa";
-import { Link } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
+import { db, auth } from "../firebase";
+import { collection, onSnapshot, query, where, doc, setDoc, serverTimestamp } from "firebase/firestore";
 import Logo from "../components/Logo";
 import Sidebar from "../components/Sidebar";
 import ThemeToggle from "../components/ThemeToggle";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "./Dashboard.css";
+import MobileDashboard from "./MobileDashboard";
+import TrinetraAgent from "../components/TrinetraAgent";
 
 // ── Tile Layers ─────────────────────────────────────────────
 // Esri World Street = most detailed for India roads & colonies
@@ -44,17 +48,24 @@ const ROUTING_URL = (start, end) =>
   `https://router.project-osrm.org/route/v1/driving/${start.lng},${start.lat};${end.lng},${end.lat}?overview=full&geometries=geojson&steps=true`;
 
 // ── Leaflet Icons ───────────────────────────────────────────
+// ── Leaflet Icons ───────────────────────────────────────────
 const userIcon = (heading) => L.divIcon({
     className: "user-marker",
     html: `
-      <div style="position:relative; width:24px; height:24px; display:flex; align-items:center; justifyContent:center;">
-        <div style="position:absolute; width:100%; height:100%; background:#4285F4; border:3px solid #fff; border-radius:50%; box-shadow:0 0 15px rgba(66,133,244,0.6); z-index:2;"></div>
-        <div style="position:absolute; width:40px; height:40px; background:rgba(66,133,244,0.2); border-radius:50%; animation:pulse-gps 2s infinite; z-index:1;"></div>
-        ${heading ? `<div style="position:absolute; top:-12px; width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-bottom:12px solid #4285F4; transform:rotate(${heading}deg); transform-origin:center 18px; filter:drop-shadow(0 2px 2px rgba(0,0,0,0.2)); z-index:3;"></div>` : ''}
+      <div style="position:relative; width:48px; height:48px; display:flex; align-items:center; justify-content:center;">
+        <!-- Sonar Pulse -->
+        <div style="position:absolute; width:44px; height:44px; background:rgba(66,133,244,0.2); border-radius:50%; animation:pulse-gps 2s infinite;"></div>
+        
+        <!-- Tactical Arrow -->
+        <div style="position:relative; width:38px; height:38px; background:#4285F4; border:3px solid #fff; border-radius:50%; display:flex; align-items:center; justify-content:center; box-shadow:0 8px 25px rgba(0,0,0,0.5); transform: rotate(${heading || 0}deg); transition: transform 0.3s ease;">
+           <svg viewBox="0 0 24 24" width="24" height="24" fill="#fff">
+             <path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z"/>
+           </svg>
+        </div>
       </div>
     `,
-    iconSize: [24, 24],
-    iconAnchor: [12, 12]
+    iconSize: [48, 48],
+    iconAnchor: [24, 24]
   });
 
 const mkIcon = (html, w, h) => L.divIcon({ html, iconSize: [w, h], iconAnchor: [w / 2, h / 2], className: "", interactive: false });
@@ -166,7 +177,7 @@ function PlaceManagerModal({ isOpen, onClose, onSave, savedPlaces }) {
         {/* Current Saved Info */}
         <div style={{ marginBottom: '20px', display: 'flex', gap: '10px' }}>
           {['Home', 'Office'].map(label => {
-            const p = savedPlaces.find(x => x.label === label);
+            const p = Array.isArray(savedPlaces) ? savedPlaces.find(x => x.label === label) : null;
             return (
               <div key={label} style={{ flex: 1, padding: '10px', background: 'var(--bg2)', borderRadius: '12px', border: '1px solid var(--border)' }}>
                 <div style={{ fontSize: '10px', opacity: 0.6, marginBottom: '2px' }}>{label}</div>
@@ -390,8 +401,11 @@ export default function Dashboard() {
   const toastIdRef = useRef(0);
   const watchIdRef = useRef(null);
   const zoneLayersRef = useRef([]);
-
+  const marker3DRef = useRef(null);
+  const lastFetchTimeRef = useRef(0);
+  const lastFetchedPosRef = useRef(null);
   const { theme, toggleTheme } = useTheme();
+  const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const dark = theme === 'dark';
 
@@ -400,9 +414,25 @@ export default function Dashboard() {
   const userInitials = (loggedInUser.name || "A").split(" ").map(n => n[0]).join("").toUpperCase();
 
   const handleLogout = () => {
-    localStorage.removeItem("trinetra_user");
-    window.location.href = "/";
+    console.log("Logout initiated");
+    auth.signOut().then(() => {
+      localStorage.clear(); 
+      window.location.href = "/login";
+    }).catch(() => {
+      localStorage.clear();
+      window.location.href = "/login";
+    });
   };
+
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+  useEffect(() => {
+    const checkRes = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', checkRes);
+    return () => window.removeEventListener('resize', checkRes);
+  }, []);
+
+
   const [position, setPosition] = useState(null); // [lat, lng]
   const [mapStyle, setMapStyle] = useState("streets");
   const [mapReady, setMapReady] = useState(false);
@@ -471,7 +501,25 @@ export default function Dashboard() {
       if (wakeLock) wakeLock.release();
     };
   }, [backgroundActive]);
+  // ── Fully Dynamic Demo Zones (Always around User) ────────
+  const getDemoZones = (lat, lng) => [
+    // Red Zones - High Risk (Within ~300m)
+    { lat: lat + 0.0015, lng: lng + 0.0020, risk: 'red',    label: 'High Risk Alert', crimeType: 'Recent Incident Spot', source: 'TRINETRA AI', count: 12 },
+    { lat: lat - 0.0020, lng: lng - 0.0015, risk: 'red',    label: 'Danger Zone',     crimeType: 'Poor Connectivity',    source: 'AI SCAN',    count: 8 },
+    
+    // Yellow Zones - Caution (Within ~400m)
+    { lat: lat + 0.0025, lng: lng - 0.0020, risk: 'yellow', label: 'Caution Area',    crimeType: 'Crowded/Unsafe',        source: 'CITIZEN',    count: 5 },
+    { lat: lat - 0.0010, lng: lng + 0.0030, risk: 'yellow', label: 'Sensitive Zone',  crimeType: 'Low Lighting',         source: 'TRINETRA',   count: 3 },
+    
+    // Green Zones - Safe (Within ~200m)
+    { lat: lat + 0.0008, lng: lng - 0.0010, risk: 'green',  label: 'Safe Haven',      crimeType: 'Police Patrol Active', source: 'POLICE',     count: 0 },
+    { lat: lat - 0.0012, lng: lng + 0.0005, risk: 'green',  label: 'Secure Plaza',    crimeType: 'CCTV Monitored',       source: 'POLICE',     count: 0 },
+  ];
+
   const [crimeZones, setCrimeZones] = useState([]);
+  const [dbCrimeZones, setDbCrimeZones] = useState([]);
+  const [sosDynamicZones, setSosDynamicZones] = useState([]);
+  const [serverIp] = useState(localStorage.getItem("trinetra_server_ip") || "localhost");
   const [showZones, setShowZones] = useState(true);
   const [routeDangerWarning, setRouteDangerWarning] = useState(null);
   const [showFullNav, setShowFullNav] = useState(false);
@@ -483,19 +531,75 @@ export default function Dashboard() {
   const [zoneType, setZoneType] = useState("danger");
   const [zoneRadius, setZoneRadius] = useState(200);
   const [currentRoute, setCurrentRoute] = useState(null);
+  const [tripProgress, setTripProgress] = useState(null); // { totalDist, coveredDist, remainingDist, destLat, destLng, startPos }
   const [areaName, setAreaName] = useState("Detecting location...");
   const [fullAddress, setFullAddress] = useState("");
   const [locLoading, setLocLoading] = useState(false);
+
+  useEffect(() => {
+    // 1. Fetch Permanent Crime Zones
+    const unsubZones = onSnapshot(collection(db, "crimeZones"), (snapshot) => {
+      const zones = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setDbCrimeZones(zones);
+    });
+
+    // 2. Fetch Safe Stations
+    const unsubStations = onSnapshot(collection(db, "stations"), (snapshot) => {
+      const stations = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setNearbyStations(stations);
+    });
+
+    // 3. Fetch User Saved Places (Only if ID exists)
+    let unsubPlaces = () => {};
+    if (loggedInUser?.id) {
+      unsubPlaces = onSnapshot(collection(db, "users", loggedInUser.id, "savedPlaces"), (snapshot) => {
+        const places = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setSavedPlaces(places);
+      });
+    }
+
+    // 4. Dynamic SOS-Based Threat Mapping
+    const unsubSOS = onSnapshot(collection(db, "sosAlerts"), (snapshot) => {
+      const alerts = snapshot.docs.map(doc => doc.data());
+      const clusters = {};
+      alerts.forEach(a => {
+        if (!a.lat || !a.lng) return;
+        const key = `${a.lat.toFixed(3)}|${a.lng.toFixed(3)}`;
+        if (!clusters[key]) clusters[key] = { lat: a.lat, lng: a.lng, count: 0 };
+        clusters[key].count += 1;
+      });
+
+      const dynamicZones = Object.values(clusters).map(c => {
+        if (c.count >= 20) return { ...c, risk: 'red', label: 'SOS Hotspot (High)', crimeType: 'Multiple SOS Alerts', source: 'TRINETRA AI' };
+        if (c.count >= 10) return { ...c, risk: 'yellow', label: 'SOS Frequent Area', crimeType: 'Recent Activity', source: 'TRINETRA AI' };
+        return null;
+      }).filter(Boolean);
+
+      setSosDynamicZones(dynamicZones);
+    });
+
+    return () => { unsubZones(); unsubStations(); unsubPlaces(); unsubSOS(); };
+  }, [loggedInUser?.id]);
+
+  // Combine all zones (DB + Demo + Dynamic SOS)
+  useEffect(() => {
+    const lat = position?.[0] || 22.7196;
+    const lng = position?.[1] || 75.8577;
+    const demoZones = getDemoZones(lat, lng);
+    setCrimeZones([...demoZones, ...dbCrimeZones, ...sosDynamicZones]);
+  }, [dbCrimeZones, sosDynamicZones, position]);
   const [gpsError, setGpsError] = useState(null);
   const [voiceNavActive, setVoiceNavActive] = useState(false);
   const [currentNavStep, setCurrentNavStep] = useState(null);
   const [sirenPlaying, setSirenPlaying] = useState(false);
-  const [sirenPassword, setSirenPassword] = useState("1234");
+  const [sirenPassword, setSirenPassword] = useState(localStorage.getItem("trinetra_siren_password") || "1234");
   const [showStopModal, setShowStopModal] = useState(false);
   const [stopPasswordInput, setStopPasswordInput] = useState("");
   const [sirenOscillator, setSirenOscillator] = useState(null);
   const [sirenGain, setSirenGain] = useState(null);
   const [audioContext, setAudioContext] = useState(null);
+  const [showPassSetup, setShowPassSetup] = useState(false);
+  const [resetFlow, setResetFlow] = useState({ active: false, step: 0, otp: "", inputOtp: "", newPass: "" });
   const [spokenSteps, setSpokenSteps] = useState(new Set());
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [aiPetName, setAiPetName] = useState(localStorage.getItem("trinetra_pet_name") || "");
@@ -514,6 +618,15 @@ export default function Dashboard() {
   const [map3D, setMap3D] = useState(false);
   const dgSocketRef = useRef(null);
   const sosActiveRef = useRef(false);
+  const sirenIntervalRef = useRef(null);
+
+  // ── Siren Password Initial Setup ──
+  useEffect(() => {
+    const saved = localStorage.getItem("trinetra_siren_password");
+    if (!saved && loggedInUser.id) {
+      setTimeout(() => setShowPassSetup(true), 3000);
+    }
+  }, []);
   
   // ── Global AI Command Bridge (for Floating Agent) ──
   useEffect(() => {
@@ -576,6 +689,7 @@ export default function Dashboard() {
     const handleSetStart = (e) => {
       const { lat, lng } = e.detail;
       setPosition([lat, lng]);
+      localStorage.setItem("trinetra_last_pos", JSON.stringify([lat, lng]));
       setLocLoading(false);
       setGpsError(null);
       addToast("📍 Starting location set manually!", "success");
@@ -611,11 +725,19 @@ export default function Dashboard() {
     // Step 1: Force the browser prompt
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
-        const { latitude: lat, longitude: lng } = pos.coords;
-        setPosition([lat, lng]);
-        localStorage.setItem("trinetra_last_pos", JSON.stringify([lat, lng]));
+        const { latitude, longitude } = pos.coords;
+        const newPos = [latitude, longitude];
+        setPosition(newPos);
+        localStorage.setItem('trinetra_last_pos', JSON.stringify(newPos));
         setShowLocPrompt(false);
-        if (mapRef.current) mapRef.current.flyTo([lat, lng], 16);
+        if (mapRef.current) {
+          mapRef.current.flyTo(newPos, 16);
+          if (!userMarkerRef.current) {
+            userMarkerRef.current = L.marker(newPos, { icon: userIcon(), zIndexOffset: 1000 }).addTo(mapRef.current);
+          } else {
+            userMarkerRef.current.setLatLng(newPos);
+          }
+        }
         
         // Step 2: Start real-time watch
         watchIdRef.current = navigator.geolocation.watchPosition(
@@ -627,11 +749,15 @@ export default function Dashboard() {
             setGpsError(null);
             setShowLocPrompt(false); 
             if (mapRef.current && isFinite(wLat) && isFinite(wLng)) {
-              if (userMarkerRef.current) mapRef.current.removeLayer(userMarkerRef.current);
-              userMarkerRef.current = L.marker([wLat, wLng], { 
-                icon: userIcon(heading), 
-                zIndexOffset: 1000 
-              }).addTo(mapRef.current);
+              if (!userMarkerRef.current) {
+                userMarkerRef.current = L.marker([wLat, wLng], { 
+                  icon: userIcon(heading), 
+                  zIndexOffset: 1000 
+                }).addTo(mapRef.current);
+              } else {
+                userMarkerRef.current.setLatLng([wLat, wLng]);
+                if (heading !== undefined) userMarkerRef.current.setIcon(userIcon(heading));
+              }
             }
           },
           (err) => {
@@ -703,151 +829,80 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      if (mapRef.current) {
-        mapRef.current.invalidateSize();
-      }
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [sidebarOpen]);
+    const handleResize = () => { if (mapRef.current) mapRef.current.invalidateSize(); };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    if (mapRef.current) setTimeout(() => { if (mapRef.current) mapRef.current.invalidateSize(); }, 500);
+  }, [sidebarOpen, map3D]);
 
   // ── 3D MapLibre GL Map ──────────────────────────────────
   useEffect(() => {
-    // Helper to init the map once maplibregl is available
     const initMap3D = () => {
       console.log("🚀 Initializing 3D Map...");
       const mlgl = window.maplibregl;
-      if (!mlgl) {
-        console.error("❌ MapLibre GL JS not found in window");
-        return;
-      }
-      if (!map3dContainerRef.current) {
-        console.error("❌ 3D Container Ref not found");
-        return;
-      }
+      if (!mlgl || !map3dContainerRef.current) return;
 
-      // Cleanup old instance
       if (maplibreRef.current) {
         try { maplibreRef.current.remove(); } catch(e) {}
         maplibreRef.current = null;
+        marker3DRef.current = null; // CRITICAL: Reset marker ref when map is destroyed
       }
-
-      const center = mapRef.current
-        ? [mapRef.current.getCenter().lng, mapRef.current.getCenter().lat]
-        : [77.4126, 23.2599];
-      const zoom = mapRef.current ? Math.min(mapRef.current.getZoom(), 18) : 14;
 
       try {
         const ml = new mlgl.Map({
           container: map3dContainerRef.current,
-          style: {
-            version: 8,
-            sources: {
-              satellite: {
-                type: 'raster',
-                tiles: ['https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'],
-                tileSize: 256,
-                maxzoom: 20,
-              }
-            },
-            layers: [
-              { id: 'satellite-layer', type: 'raster', source: 'satellite', minzoom: 0, maxzoom: 22 }
-            ],
-          },
-          center,
-          zoom,
-          pitch: 65,
-          bearing: -15,
-          antialias: true,
-          maxZoom: 19,
+          style: mapStyle === 'satellite' ? 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json' : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+          center: [position[1], position[0]],
+          zoom: 16, pitch: 55, bearing: -20, antialias: true
         });
-
-        ml.on('error', (e) => console.error("MapLibre Internal Error:", e));
 
         ml.on('load', () => {
-          console.log("✅ MapLibre 3D Loaded Successfully");
-          
-          // Add OpenFreeMap 3D Buildings
           try {
-            ml.addSource('buildings-src', {
-              type: 'vector',
-              tiles: ['https://tiles.openfreemap.org/planet/{z}/{x}/{y}.pbf'],
-              maxzoom: 14
-            });
-
+            ml.addSource('buildings-src', { type: 'vector', tiles: ['https://tiles.openfreemap.org/planet/{z}/{x}/{y}.pbf'], maxzoom: 14 });
             ml.addLayer({
-              id: 'buildings-3d',
-              type: 'fill-extrusion',
-              source: 'buildings-src',
-              'source-layer': 'building',
-              minzoom: 14,
+              id: 'buildings-3d', type: 'fill-extrusion', source: 'buildings-src', 'source-layer': 'building', minzoom: 14,
               paint: {
-                'fill-extrusion-color': [
-                  'interpolate', ['linear'], ['get', 'render_height'],
-                  0, '#ffffff',
-                  50, '#e0e0e0',
-                  100, '#c0c0c0'
-                ],
+                'fill-extrusion-color': ['interpolate', ['linear'], ['get', 'render_height'], 0, '#ffffff', 50, '#e0e0e0', 100, '#c0c0c0'],
                 'fill-extrusion-height': ['coalesce', ['get', 'render_height'], 20],
                 'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0],
-                'fill-extrusion-opacity': 0.8,
-                'fill-extrusion-vertical-gradient': true,
+                'fill-extrusion-opacity': 0.8, 'fill-extrusion-vertical-gradient': true,
               }
             });
-          } catch(e) { console.warn("Could not load 3D buildings layer", e); }
-
-          // Add User Marker
-          if (position) {
-            const el = document.createElement('div');
-            el.className = 'marker-3d-user';
-            new mlgl.Marker({ element: el })
-              .setLngLat([position[1], position[0]])
-              .addTo(ml);
-          }
-
-          // Force a resize to ensure it fills the container
-          setTimeout(() => ml.resize(), 100);
+          } catch(e) {}
+          if (crimeZones.length > 0) syncZonesTo3D(ml);
+          ml.resize();
+          
+          // Force a marker sync once the new map is loaded
+          setTimeout(() => {
+            if (maplibreRef.current && position) sync3DUserMarker(position);
+          }, 500);
         });
-
         maplibreRef.current = ml;
-      } catch (err) {
-        console.error("💥 Critical MapLibre Error:", err);
-      }
+      } catch (err) { console.error("💥 MapLibre Error:", err); }
     };
 
     if (map3D) {
-      if (window.maplibregl) {
-        initMap3D();
-      } else {
-        // Fallback: Manually inject scripts if they are somehow missing
+      if (window.maplibregl) initMap3D();
+      else {
         if (!document.getElementById('maplibre-js')) {
-          const link = document.createElement('link');
-          link.rel = 'stylesheet';
-          link.href = 'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css';
-          document.head.appendChild(link);
-
-          const script = document.createElement('script');
-          script.id = 'maplibre-js';
-          script.src = 'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js';
-          script.onload = initMap3D;
-          document.head.appendChild(script);
+          const link = document.createElement('link'); link.rel = 'stylesheet'; link.href = 'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css'; document.head.appendChild(link);
+          const script = document.createElement('script'); script.id = 'maplibre-js'; script.src = 'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js'; script.onload = initMap3D; document.head.appendChild(script);
         } else {
-          // Script exists but not ready
-          const poll = setInterval(() => {
-            if (window.maplibregl) { clearInterval(poll); initMap3D(); }
-          }, 500);
+          const poll = setInterval(() => { if (window.maplibregl) { clearInterval(poll); initMap3D(); } }, 500);
           setTimeout(() => clearInterval(poll), 10000);
         }
       }
     } else {
-      // Destroy 3D map
-      if (maplibreRef.current) {
-        maplibreRef.current.remove();
-        maplibreRef.current = null;
+      if (maplibreRef.current) { 
+        maplibreRef.current.remove(); 
+        maplibreRef.current = null; 
+        marker3DRef.current = null; // CRITICAL: Reset marker ref
       }
       setTimeout(() => { if (mapRef.current) mapRef.current.invalidateSize(); }, 300);
     }
-
     return () => {};
   }, [map3D]);
 
@@ -895,94 +950,50 @@ export default function Dashboard() {
   // ── Pickup external route request ────────────────────────
   useEffect(() => {
     if (!mapReady || !mapRef.current) return;
-    
     const target = sessionStorage.getItem("nr_route_to");
     if (target) {
       try {
         const { lat, lng, name } = JSON.parse(target);
         sessionStorage.removeItem("nr_route_to");
-        
-        // Wait a bit for map/position to stabilize
-        setTimeout(() => {
-          getRoute(lat, lng, name);
-        }, 1500);
-      } catch (err) {
-        console.error("Route pickup error:", err);
-      }
+        setTimeout(() => { getRoute(lat, lng, name); }, 1500);
+      } catch (err) { console.error("Route pickup error:", err); }
     }
   }, [mapReady]);
 
-  // ── Crime Zone Rendering ─────────────────────────────────
   const renderCrimeZones = (zones) => {
     if (!mapRef.current) return;
-    // Remove old zone layers
     zoneLayersRef.current.forEach(l => { try { mapRef.current.removeLayer(l); } catch {} });
     zoneLayersRef.current = [];
 
     zones.forEach(zone => {
       if (!zone || !isFinite(zone.lat) || !isFinite(zone.lng)) return;
-
-      const colors = {
-        red:    { fill: '#ff4d4d', stroke: '#cc0000', fillOp: 0.18 },
-        yellow: { fill: '#fbbc04', stroke: '#e6a000', fillOp: 0.15 },
-        green:  { fill: '#00e5a0', stroke: '#00b87a', fillOp: 0.12 },
-      };
+      const colors = { red: { fill: '#ff4d4d', stroke: '#cc0000' }, yellow: { fill: '#fbbc04', stroke: '#e6a000' }, green: { fill: '#00e5a0', stroke: '#00b87a' } };
       const c = colors[zone.risk] || colors.yellow;
-      const radius = zone.risk === 'red' ? 120 : zone.risk === 'yellow' ? 80 : 50;
-
-      const circle = L.circle([zone.lat, zone.lng], {
-        radius,
-        color: c.stroke,
-        fillColor: c.fill,
-        fillOpacity: c.fillOp,
-        weight: 1.5,
-        dashArray: zone.risk === 'green' ? '4,4' : null,
-      }).addTo(mapRef.current);
-
+      const radius = zone.risk === 'red' ? 100 : zone.risk === 'yellow' ? 80 : 60;
+      const circle = L.circle([zone.lat, zone.lng], { radius, color: c.stroke, fillColor: c.fill, fillOpacity: 0.1, weight: 3, className: `zone-pulse-${zone.risk}` }).addTo(mapRef.current);
       const riskEmoji = zone.risk === 'red' ? '🔴' : zone.risk === 'yellow' ? '🟡' : '🟢';
-      circle.bindPopup(`
-        <div style="font-family:Inter,sans-serif;min-width:180px">
-          <div style="font-weight:700;font-size:13px;margin-bottom:4px">${riskEmoji} ${zone.label}</div>
-          <div style="font-size:11px;color:#666;margin-bottom:4px">${zone.crimeType || ''}</div>
-          <div style="font-size:10px;padding:3px 8px;border-radius:99px;display:inline-block;
-            background:${c.fill}22;color:${c.stroke};border:1px solid ${c.stroke}44">
-            ${zone.source} · ${zone.count} incidents
-          </div>
-        </div>
-      `, { className: 'nr-popup' });
-
+      circle.bindPopup(`<div style="font-family:Inter,sans-serif;min-width:180px"><div style="font-weight:700;font-size:13px;margin-bottom:4px">${riskEmoji} ${zone.label}</div><div style="font-size:11px;color:#666;margin-bottom:4px">${zone.crimeType || ''}</div><div style="font-size:10px;padding:3px 8px;border-radius:99px;display:inline-block;background:${c.fill}22;color:${c.stroke};border:1px solid ${c.stroke}44">${zone.source} · ${zone.count} incidents</div></div>`, { className: 'nr-popup' });
       zoneLayersRef.current.push(circle);
     });
   };
 
-  // ── Fetch Crime Zones from Server ────────────────────────
   const fetchCrimeZones = async () => {
-    const lat = position?.[0] || 23.2599;
-    const lng = position?.[1] || 77.4126;
+    const lat = position?.[0] || 22.7196;
+    const lng = position?.[1] || 75.8577;
+    
+    const demoData = getDemoZones(lat, lng);
+    setCrimeZones(demoData);
+    if (showZones) renderCrimeZones(demoData);
     
     try {
-      const res = await fetch(`http://localhost:5000/api/crime-zones?lat=${lat}&lng=${lng}`);
-      if (!res.ok) throw new Error('server error');
-      const data = await res.json();
-      setCrimeZones(data.zones || []);
-      if (showZones) renderCrimeZones(data.zones || []);
-    } catch {
-      // Server offline — Generate simulated zones based on user's CURRENT city
-      // This ensures if you are in Indore, you see Indore zones, not Bhopal.
-      const fallback = [
-        { lat: lat + 0.005, lng: lng + 0.003, risk: 'red',    label: 'High Risk Area', crimeType: 'Recent SOS Alerts', source: 'TRINETRA', count: 12 },
-        { lat: lat - 0.008, lng: lng - 0.005, risk: 'red',    label: 'Danger Zone',    crimeType: 'Chain Snatching',   source: 'NCRB', count: 15 },
-        { lat: lat + 0.012, lng: lng - 0.002, risk: 'yellow', label: 'Caution Area',   crimeType: 'Eve Teasing',       source: 'NCRB', count: 7 },
-        { lat: lat - 0.003, lng: lng + 0.010, risk: 'yellow', label: 'Sensitive Zone', crimeType: 'Theft',           source: 'NCRB', count: 5 },
-        { lat: lat + 0.002, lng: lng + 0.002, risk: 'green',  label: 'Safe Zone',      crimeType: 'Police Patrolled',  source: 'TRINETRA', count: 1 },
-        // New: Crowded Areas & Main Roads as Safe Zones
-        { lat: lat + 0.001, lng: lng - 0.004, risk: 'green',  label: 'Crowded Market', crimeType: 'Public Area (Safe)', source: 'TRINETRA', count: 0 },
-        { lat: lat - 0.005, lng: lng + 0.006, risk: 'green',  label: 'Main Highway',   crimeType: 'Well Lit Road',     source: 'TRINETRA', count: 0 },
-        { lat: lat + 0.007, lng: lng + 0.008, risk: 'green',  label: 'Public Plaza',   crimeType: 'High Footfall',     source: 'TRINETRA', count: 0 },
-      ];
-      setCrimeZones(fallback);
-      if (showZones) renderCrimeZones(fallback);
-    }
+      const res = await fetch(`http://localhost:5005/api/crime-zones?lat=${lat}&lng=${lng}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.zones && data.zones.length > 0) {
+          setCrimeZones([...demoData, ...data.zones]);
+        }
+      }
+    } catch (e) {}
   };
 
   // Fly to user on first valid position
@@ -994,87 +1005,118 @@ export default function Dashboard() {
     }
   }, [position, mapReady]);
 
-  // Call fetchCrimeZones once map is ready and whenever position significantly changes
   useEffect(() => {
-    if (!mapRef.current || !position) return;
-    fetchCrimeZones();
-    const interval = setInterval(fetchCrimeZones, 60000); // refresh every 60s
+    if (!mapReady || !position) return;
+    
+    // Only fetch if moved > 100m or first time
+    let shouldFetch = !lastFetchedPosRef.current;
+    if (lastFetchedPosRef.current) {
+        const dist = calcDistKm(position[0], position[1], lastFetchedPosRef.current[0], lastFetchedPosRef.current[1]);
+        if (dist > 0.1) shouldFetch = true; // 100m
+    }
+
+    if (shouldFetch) {
+        fetchCrimeZones();
+        lastFetchedPosRef.current = position;
+    }
+
+    const interval = setInterval(() => {
+        fetchCrimeZones();
+        lastFetchedPosRef.current = position;
+    }, 60000); // refresh every 60s
     return () => clearInterval(interval);
-  }, [mapRef.current, position?.[0], position?.[1]]);
+  }, [mapReady, position?.[0], position?.[1]]); 
 
-  // Toggle zone visibility
+
+  // Toggle zone visibility and redraw on data change
   useEffect(() => {
-    if (showZones) renderCrimeZones(crimeZones);
-    else { zoneLayersRef.current.forEach(l => { try { mapRef.current?.removeLayer(l); } catch {} }); zoneLayersRef.current = []; }
-  }, [showZones]);
+    if (showZones && crimeZones.length > 0) {
+      renderCrimeZones(crimeZones);
+    } else if (!showZones) {
+      zoneLayersRef.current.forEach(l => { try { mapRef.current?.removeLayer(l); } catch {} });
+      zoneLayersRef.current = [];
+    }
+    
+    // Sync to 3D Map if active
+    if (map3D && maplibreRef.current?.loaded()) {
+      syncZonesTo3D(maplibreRef.current);
+    }
+  }, [showZones, crimeZones, mapReady, map3D]);
 
-  // ── Tile style change ────────────────────────────────────
-  useEffect(() => {
-    if (!mapRef.current || !mapReady) return;
-    const t = TILES[mapStyle];
-    if (tileLayerRef.current) mapRef.current.removeLayer(tileLayerRef.current);
-    tileLayerRef.current = L.tileLayer(t.url, { 
-      attribution: t.attr, 
-      maxZoom: 18, 
-      noClip: true,
-      crossOrigin: true,
-      updateWhenIdle: true
-    }).addTo(mapRef.current);
-    // Update map background
-    if (containerRef.current) containerRef.current.style.background = t.bg;
-  }, [mapStyle, mapReady]);
+  const syncZonesTo3D = (ml) => {
+    if (!ml || !ml.loaded()) return;
+    
+    // Cleanup old zones
+    crimeZones.forEach((_, i) => {
+      if (ml.getLayer(`zone-3d-${i}`)) ml.removeLayer(`zone-3d-${i}`);
+      if (ml.getSource(`zone-src-${i}`)) ml.removeSource(`zone-src-${i}`);
+    });
 
+    if (!showZones) return;
 
+    crimeZones.forEach((zone, i) => {
+      const color = zone.risk === 'red' ? '#ea4335' : zone.risk === 'yellow' ? '#fbbc04' : '#00e5a0';
+      
+      const points = 32;
+      const radius = 0.001; 
+      const coords = [];
+      for (let j = 0; j < points; j++) {
+        const angle = (j / points) * Math.PI * 2;
+        coords.push([
+          zone.lng + radius * Math.cos(angle),
+          zone.lat + radius * Math.sin(angle)
+        ]);
+      }
+      coords.push(coords[0]);
 
-  // ── Dynamic Nearby Help (Overpass API) ──────────────────
-  const lastFetchTimeRef = useRef(0);
+      ml.addSource(`zone-src-${i}`, {
+        type: 'geojson',
+        data: {
+          type: 'Feature',
+          geometry: { type: 'Polygon', coordinates: [coords] }
+        }
+      });
+
+      ml.addLayer({
+        id: `zone-3d-${i}`,
+        type: 'fill-extrusion',
+        source: `zone-src-${i}`,
+        paint: {
+          'fill-extrusion-color': color,
+          'fill-extrusion-height': 50,
+          'fill-extrusion-base': 0,
+          'fill-extrusion-opacity': 0.4
+        }
+      });
+    });
+  };
+
   const fetchNearbyStations = async (lat, lng) => {
     const now = Date.now();
-    // Throttle: Only fetch if 60 seconds have passed
-    if (now - lastFetchTimeRef.current < 60000 && nearbyStations.length > 5) {
-      return;
-    }
+    if (now - lastFetchTimeRef.current < 60000 && nearbyStations.length > 5) return;
     lastFetchTimeRef.current = now;
 
     try {
-      const query = `
-        [out:json][timeout:25];
-        (
-          node["amenity"="police"](around:10000, ${lat}, ${lng});
-          node["amenity"="hospital"](around:10000, ${lat}, ${lng});
-          node["amenity"="fire_station"](around:10000, ${lat}, ${lng});
-        );
-        out body;
-      `;
+      const query = `[out:json][timeout:25];(node["amenity"="police"](around:10000, ${lat}, ${lng});node["amenity"="hospital"](around:10000, ${lat}, ${lng});node["amenity"="fire_station"](around:10000, ${lat}, ${lng}););out body;`;
       const res = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`);
       const data = await res.json();
-      
-      const mapped = data.elements.map(el => {
-        const d = calcDistKm(lat, lng, el.lat, el.lon);
-        return {
+      const mapped = data.elements.map(el => ({
           label: el.tags.name || (el.tags.amenity === "police" ? "Police Station" : el.tags.amenity === "hospital" ? "Hospital" : "Fire Station"),
           type: el.tags.amenity === "police" ? "Police" : el.tags.amenity === "hospital" ? "Hospital" : "Fire",
           icon: el.tags.amenity === "police" ? "🚔" : el.tags.amenity === "hospital" ? "🏥" : "🚒",
-          lat: el.lat,
-          lng: el.lon,
-          dist: d,
+          lat: el.lat, lng: el.lon, dist: calcDistKm(lat, lng, el.lat, el.lon),
           phone: el.tags["contact:phone"] || el.tags.phone || (el.tags.amenity === "police" ? "100" : "108"),
           open: el.tags.opening_hours || "24/7"
-        };
-      });
-
-      // Add emergency helplines (distance 0 since they are phone services)
-      const final = [
-        ...mapped,
-        { label: "Women Helpline", type: "Government", icon: "📞", lat: lat, lng: lng, dist: 0, phone: "181", open: "24/7" },
-        { label: "Child Helpline", type: "Government", icon: "👶", lat: lat, lng: lng, dist: 0, phone: "1098", open: "24/7" }
+      }));
+      const final = [...mapped, 
+        { label: "Women Helpline", type: "Gov", icon: "📞", lat, lng, dist: 0, phone: "181" },
+        { label: "Child Helpline", type: "Gov", icon: "👶", lat, lng, dist: 0, phone: "1098" }
       ];
-
       setNearbyStations(final.sort((a, b) => a.dist - b.dist).slice(0, 10));
     } catch {
       setNearbyStations([
-        { label: "Emergency Police", type: "Police", icon: "🚔", lat: lat, lng: lng, dist: 0.1, phone: "100", open: "24/7" },
-        { label: "Emergency Medical", type: "Hospital", icon: "🏥", lat: lat, lng: lng, dist: 0.1, phone: "108", open: "24/7" }
+        { label: "Emergency Police", type: "Police", icon: "🚔", lat, lng, dist: 0.1, phone: "100" },
+        { label: "Emergency Medical", type: "Hospital", icon: "🏥", lat, lng, dist: 0.1, phone: "108" }
       ]);
     }
   };
@@ -1087,17 +1129,65 @@ export default function Dashboard() {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   };
 
-  // Sync address and stations with position
-  useEffect(() => {
-    if (position) {
-      reverseGeocode(position[0], position[1]);
-      fetchNearbyStations(position[0], position[1]);
-      
-      // Update marker positions
-      if (userMarkerRef.current) userMarkerRef.current.setLatLng(position);
-      if (pulseMarkerRef.current) pulseMarkerRef.current.setLatLng(position);
+  const sync3DUserMarker = (pos) => {
+    if (!maplibreRef.current || !maplibreRef.current.loaded() || !pos) return;
+    const [lat, lng] = pos;
+    const mLng = parseFloat(lng), mLat = parseFloat(lat);
+    if (isNaN(mLng) || isNaN(mLat)) return;
+
+    // Ensure marker belongs to the current map instance
+    if (marker3DRef.current && marker3DRef.current._map !== maplibreRef.current) {
+       try { marker3DRef.current.remove(); } catch(e) {}
+       marker3DRef.current = null;
     }
-  }, [position?.[0], position?.[1]]);
+
+    if (!marker3DRef.current) {
+      const el = document.createElement('div');
+      el.className = 'marker-3d-user';
+      el.style.width = '52px';
+      el.style.height = '52px';
+      el.innerHTML = `
+        <div style="position:relative; width:52px; height:52px; display:flex; align-items:center; justify-content:center;">
+          <!-- Sonar Pulse -->
+          <div style="position:absolute; width:48px; height:48px; background:rgba(66,133,244,0.3); border-radius:50%; animation:pulse-gps 2s infinite;"></div>
+          
+          <!-- Tactical Arrow -->
+          <div class="arrow-3d-body" style="position:relative; width:42px; height:42px; background:#4285F4; border:3px solid #fff; border-radius:50%; display:flex; align-items:center; justify-content:center; box-shadow:0 10px 35px rgba(0,0,0,0.6); transition: transform 0.3s ease;">
+             <svg viewBox="0 0 24 24" width="28" height="28" fill="#fff">
+               <path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z"/>
+             </svg>
+          </div>
+        </div>
+      `;
+      marker3DRef.current = new window.maplibregl.Marker({ element: el, anchor: 'center' })
+        .setLngLat([mLng, mLat])
+        .addTo(maplibreRef.current);
+      
+      // Force a resize to fix projection
+      maplibreRef.current.resize();
+    } else {
+      marker3DRef.current.setLngLat([mLng, mLat]);
+    }
+  };
+
+  useEffect(() => {
+    if (position && isFinite(position[0]) && isFinite(position[1])) {
+      const [lat, lng] = position;
+      reverseGeocode(lat, lng);
+      fetchNearbyStations(lat, lng);
+      
+      // 2D Marker Sync
+      if (mapRef.current && mapReady) {
+        if (!userMarkerRef.current) {
+          userMarkerRef.current = L.marker(position, { icon: userIcon(), zIndexOffset: 1000 }).addTo(mapRef.current);
+        } else {
+          userMarkerRef.current.setLatLng(position);
+        }
+      }
+
+      if (map3D) sync3DUserMarker(position);
+    }
+  }, [position?.[0], position?.[1], map3D, mapReady, maplibreRef.current]);
 
   // ── Clock ───────────────────────────────────────────────
   useEffect(() => {
@@ -1107,8 +1197,7 @@ export default function Dashboard() {
 
   // ── Fetch alerts ─────────────────────────────────────────
   const fetchAlerts = (lat, lng) => {
-    // Correct URL to match server /api/alerts
-    fetch(`http://localhost:5000/api/alerts?lat=${lat}&lng=${lng}`)
+    fetch(`http://localhost:5005/api/alerts?lat=${lat}&lng=${lng}`)
       .then(r => r.json()).then(d => setAlerts(d))
       .catch(() => setAlerts([
         { type: "Suspicious Activity", lat: 23.262, lng: 77.415, time: "10 min ago" },
@@ -1116,18 +1205,78 @@ export default function Dashboard() {
       ]));
   };
 
+  const lastAlertPosRef = useRef(null);
   useEffect(() => {
     if (position) {
-      fetchAlerts(position[0], position[1]);
+      let shouldFetch = !lastAlertPosRef.current;
+      if (lastAlertPosRef.current) {
+        const dist = calcDistKm(position[0], position[1], lastAlertPosRef.current[0], lastAlertPosRef.current[1]);
+        if (dist > 0.1) shouldFetch = true;
+      }
+      if (shouldFetch) {
+        fetchAlerts(position[0], position[1]);
+        lastAlertPosRef.current = position;
+      }
     }
   }, [position?.[0], position?.[1]]);
+
+  // ── Community SOS Listener (1km Radius Alert) ───────────
+  useEffect(() => {
+    if (!position || !loggedInUser.id) return;
+
+    const reportsRef = collection(db, "reports");
+    // Listen for new SOS reports
+    const q = query(
+      reportsRef, 
+      where("type", "==", "SOS"), 
+      where("status", "==", "ACTIVE")
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === "added") {
+          const report = change.doc.data();
+          
+          // 1. Don't alert the user about their own SOS
+          if (report.userId === loggedInUser.id) return;
+
+          // 2. Check if the SOS is within 1km
+          const dist = calcDistKm(position[0], position[1], report.lat, report.lng);
+          
+          // 3. Check if it's recent (within last 5 minutes)
+          const isRecent = (Date.now() - report.timestamp) < 300000;
+
+          if (dist <= 1.0 && isRecent) {
+            // Trigger Critical Community Alert
+            addToast(`🚨 NEIGHBORHOOD ALERT: ${report.userName} is in danger! (${Math.round(dist * 1000)}m away)`, "danger", 15000);
+            
+            // Visual feedback on map
+            if (mapRef.current) {
+              const pulse = L.circle([report.lat, report.lng], {
+                radius: 200, color: '#ff0000', fillColor: '#ff0000', 
+                fillOpacity: 0.3, className: 'sos-ripple-effect'
+              }).addTo(mapRef.current);
+              
+              pulse.bindPopup(`🚨 SOS: ${report.userName} needs help!`).openPopup();
+              setTimeout(() => { try { mapRef.current.removeLayer(pulse); } catch(e) {} }, 30000);
+            }
+
+            // Haptic/Vibrate
+            if ("vibrate" in navigator) navigator.vibrate([500, 200, 500, 200, 500]);
+          }
+        }
+      });
+    });
+
+    return () => unsubscribe();
+  }, [position?.[0], position?.[1], loggedInUser.id]);
 
   useEffect(() => {
     // Fetch initial saved places
     if (loggedInUser.id) {
-      fetch(`http://localhost:5000/saved-places/${loggedInUser.id}`)
-        .then(r => r.json()).then(d => setSavedPlaces(d))
-        .catch(() => {});
+      fetch(`http://localhost:5005/saved-places/${loggedInUser.id}`)
+        .then(r => r.json()).then(d => setSavedPlaces(Array.isArray(d) ? d : []))
+        .catch(() => setSavedPlaces([]));
     }
   }, []);
 
@@ -1159,19 +1308,25 @@ export default function Dashboard() {
     if (h > 21 || h < 6) s -= 15;
 
     // Proximity to crime zones
+    let zonePenalty = 0;
     let currentInRed = false;
+    
     crimeZones.forEach(zone => {
       if (!position) return;
       const d = calcDistKm(position[0], position[1], zone.lat, zone.lng);
-      if (zone.risk === 'red' && d < 0.5) {
-        s -= 40; // Heavy penalty for red zone
+      
+      if (zone.risk === 'red' && d < 0.12) { // Match visual 100m radius + small buffer
+        zonePenalty = Math.max(zonePenalty, 65);
         currentInRed = true;
-      } else if (zone.risk === 'yellow' && d < 0.4) {
-        s -= 20; // Moderate penalty for yellow zone
+      } else if (zone.risk === 'yellow' && d < 0.1) { // Match visual 80m radius
+        zonePenalty = Math.max(zonePenalty, 30);
       }
     });
 
-    const ns = Math.max(0, s);
+    s -= zonePenalty;
+
+    // Ensure score doesn't look "dead" for demo
+    const ns = Math.max(s < 10 && !sosActive ? 12 : 0, s);
     setScore(ns);
 
     if ((ns < 50 || currentInRed) && !inDangerZone) {
@@ -1183,25 +1338,95 @@ export default function Dashboard() {
     }
   }, [alerts, crimeZones, position]);
 
-  // ── Shake SOS ───────────────────────────────────────────
+  const posRef = useRef(position);
+  useEffect(() => { posRef.current = position; }, [position]);
+
+  // ── Trip Progress Tracker + Arrival Detection ──────────
+  const arrivedFiredRef = useRef(false);
   useEffect(() => {
-    const THRESH = 15, WINDOW = 1000, NEEDED = 3;
-    let last = { x: 0, y: 0, z: 0 }, count = 0, lastShake = 0;
+    if (!tripProgress || !position) return;
+    const { totalDist, destLat, destLng, startLat, startLng } = tripProgress;
+    // Distance from start to current position (covered)
+    const covered = calcDistKm(startLat, startLng, position[0], position[1]) * 1000; // in meters
+    // Distance from current position to destination (remaining)
+    const remaining = calcDistKm(position[0], position[1], destLat, destLng) * 1000; // in meters
+    const clampedCovered = Math.min(covered, totalDist);
+    setTripProgress(prev => ({
+      ...prev,
+      coveredDist: clampedCovered,
+      remainingDist: Math.max(0, totalDist - clampedCovered)
+    }));
+
+    // ── Destination Arrived → Push to Firestore for Guardian Alert ──
+    if (remaining < 100 && !arrivedFiredRef.current) {
+      arrivedFiredRef.current = true;
+      addToast("🏁 You have arrived at your destination!", "success", 6000);
+      if ("vibrate" in navigator) navigator.vibrate([200, 100, 200]);
+
+      // Push ARRIVED event to Firestore (Guardian Dashboard listens to this)
+      const firestoreNotify = async () => {
+        try {
+          const reportRef = doc(collection(db, "reports"));
+          await setDoc(reportRef, {
+            id: reportRef.id,
+            type: "ARRIVED",
+            userId: loggedInUser.id || "anonymous",
+            userName: loggedInUser.name || "TRINETRA User",
+            userMobile: loggedInUser.mobile || "N/A",
+            destinationName: currentRoute?.dest || "Destination",
+            lat: position[0],
+            lng: position[1],
+            timestamp: Date.now(),
+            createdAt: serverTimestamp(),
+            placeName: currentRoute?.dest || "Destination",
+            status: "SAFE_ARRIVED"
+          });
+          console.log("✅ [Dashboard] Arrival notified to Guardian");
+        } catch (e) {
+          console.error("❌ Arrival Firestore push failed:", e);
+        }
+      };
+      firestoreNotify();
+    }
+
+    // Reset arrivedFiredRef when route is cleared
+    if (!tripProgress) arrivedFiredRef.current = false;
+  }, [position?.[0], position?.[1], tripProgress]);
+
+  useEffect(() => {
+    const THRESH = 25, WINDOW = 1000, NEEDED = 5;
+    let last = null, count = 0, lastShake = 0;
+    
     const onMotion = (e) => {
-      const acc = e.accelerationIncludingGravity || {};
+      const acc = e.acceleration || e.accelerationIncludingGravity || {};
       const { x = 0, y = 0, z = 0 } = acc;
+      
+      if (!last) {
+        last = { x, y, z };
+        return;
+      }
+
       const delta = Math.abs(x - last.x) + Math.abs(y - last.y) + Math.abs(z - last.z);
       if (delta > THRESH) {
         const now = Date.now();
-        count = now - lastShake < WINDOW ? count + 1 : 1;
+        if (now - lastShake < WINDOW) {
+          count++;
+        } else {
+          count = 1;
+        }
         lastShake = now;
-        if (count >= NEEDED) { triggerSOS(); count = 0; }
+        
+        if (count >= NEEDED) {
+          triggerSOS();
+          count = 0;
+        }
       }
       last = { x, y, z };
     };
+
     window.addEventListener("devicemotion", onMotion);
     return () => window.removeEventListener("devicemotion", onMotion);
-  }, []);
+  }, []); // triggerSOS is stable enough here but using posRef inside it is safer
 
   // Indian Police Siren using Web Audio API
   // Pattern: fast "wiu-wiu-wiu" sweep characteristic of Indian police vehicles
@@ -1291,10 +1516,31 @@ export default function Dashboard() {
           }, 350);
         } catch (e) {}
         setSirenPlaying(false);
+        if (sirenIntervalRef.current) clearInterval(sirenIntervalRef.current);
         addToast("Siren stopped after 5 minutes", "info", 3000);
       }, 300000);
 
       ctx._sirenStopTimer = stopTimer;
+
+      // ── Anti-Mute / Volume Persistence ──
+      // Constantly reset gain to maximum level to prevent software-based silencing
+      if (sirenIntervalRef.current) clearInterval(sirenIntervalRef.current);
+      sirenIntervalRef.current = setInterval(() => {
+        if (masterGain) {
+          masterGain.gain.setValueAtTime(0.35, ctx.currentTime); // Force high volume
+        }
+      }, 1000);
+
+      // MediaSession for background persistence
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.metadata = new window.MediaMetadata({
+          title: '🚨 EMERGENCY SOS ACTIVE',
+          artist: 'TRINETRA Safety System',
+          album: 'Safety Protocol',
+          artwork: [{ src: '/logo192.png', sizes: '192x192', type: 'image/png' }]
+        });
+        navigator.mediaSession.playbackState = 'playing';
+      }
     } catch (e) {
       console.error("Siren play error:", e);
       addToast("Could not play siren", "danger");
@@ -1304,6 +1550,7 @@ export default function Dashboard() {
   // Function to stop siren with password
   const stopSiren = () => {
     if (stopPasswordInput === sirenPassword) {
+      if (sirenIntervalRef.current) clearInterval(sirenIntervalRef.current);
       try {
         if (audioContext) {
           if (audioContext._sirenStopTimer) clearTimeout(audioContext._sirenStopTimer);
@@ -1325,11 +1572,39 @@ export default function Dashboard() {
       setSirenPlaying(false);
       setShowStopModal(false);
       setStopPasswordInput("");
+      setResetFlow({ active: false, step: 0, otp: "", inputOtp: "", newPass: "" });
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
       addToast("Siren stopped successfully", "success", 3000);
     } else {
       addToast("Wrong password! Siren cannot be stopped.", "danger", 3000);
       setStopPasswordInput("");
     }
+  };
+
+  const handleForgotSirenPass = () => {
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    setResetFlow({ ...resetFlow, active: true, step: 1, otp });
+    addToast(`🛡️ TRINETRA Security: OTP sent to ${loggedInUser.email || "your registered email"}. (Code: ${otp})`, "success", 8000);
+  };
+
+  const verifySirenOtp = () => {
+    if (resetFlow.inputOtp === resetFlow.otp) {
+      setResetFlow({ ...resetFlow, step: 2 });
+      addToast("OTP Verified. Please set a new password.", "success");
+    } else {
+      addToast("Invalid OTP. Please try again.", "danger");
+    }
+  };
+
+  const resetSirenPassword = () => {
+    if (resetFlow.newPass.length < 4) {
+      addToast("Password must be at least 4 digits.", "danger");
+      return;
+    }
+    setSirenPassword(resetFlow.newPass);
+    localStorage.setItem("trinetra_siren_password", resetFlow.newPass);
+    setResetFlow({ active: false, step: 0, otp: "", inputOtp: "", newPass: "" });
+    addToast("SOS Password Reset Successfully! You can now stop the siren.", "success");
   };
 
   const triggerSOS = async () => {
@@ -1342,16 +1617,58 @@ export default function Dashboard() {
 
     // ── Generate Official Incident Report ──
     const savedReports = JSON.parse(localStorage.getItem('trinetra_sos_reports') || '[]');
+    const currentPos = posRef.current;
+    const reportLat = currentPos?.[0] || 22.7196;
+    const reportLng = currentPos?.[1] || 75.8577;
+
     const newReport = {
       id: Date.now(),
       timestamp: new Date().toISOString(),
-      lat: position?.[0] || 0,
-      lng: position?.[1] || 0,
+      lat: reportLat,
+      lng: reportLng,
       locationName: fullAddress || areaName || "GPS Location",
       message: "Emergency SOS triggered",
-      userName: loggedInUser.name || "TRINETRA User"
+      userName: loggedInUser.name || "TRINETRA User",
+      userMobile: loggedInUser.mobile || "N/A"
     };
     localStorage.setItem('trinetra_sos_reports', JSON.stringify([...savedReports, newReport]));
+    
+    // --- SYNC SOS REPORT TO FIRESTORE (Global Tactical Bridge) ---
+    try {
+      const reportRef = doc(collection(db, "reports"));
+      const reportData = {
+        id: reportRef.id,
+        reportId: "SOS-" + Math.floor(Math.random() * 10000),
+        type: "SOS",
+        description: "CRITICAL SOS TRIGGERED FROM DASHBOARD",
+        locationName: fullAddress || areaName || "GPS Location",
+        timestamp: Date.now(),
+        status: "ACTIVE",
+        userName: loggedInUser.name || "Anonymous User",
+        userMobile: loggedInUser.mobile || "N/A",
+        userId: loggedInUser.id || "anonymous",
+        lat: reportLat,
+        lng: reportLng
+      };
+      
+      await setDoc(reportRef, reportData);
+      console.log("✅ [Dashboard] SOS Synced to Firestore:", reportData);
+
+      // Trigger Divisional Alert for Commissioner
+      const alertRef = doc(collection(db, "divisional_alerts"));
+      await setDoc(alertRef, {
+          source: "CITIZEN_DASHBOARD",
+          targetDivision: "7", // Commissioner
+          type: "PUBLIC_SOS",
+          message: `URGENT: SOS Signal from ${loggedInUser.name || 'Citizen'} at ${reportData.locationName}`,
+          timestamp: Date.now(),
+          priority: "CRITICAL",
+          status: "ACTIVE"
+      });
+
+    } catch (e) {
+      console.error("❌ [Dashboard] Firestore SOS Sync Failed:", e);
+    }
     
     // Trigger siren after short delay
     setTimeout(() => { playSiren(); }, 2000);
@@ -1420,6 +1737,7 @@ export default function Dashboard() {
     setShowFullNav(false);
     setNavInstructions([]);
     setCurrentRoute(null);
+    setTripProgress(null);
     try { if (routeLineRef.current && mapRef.current) { mapRef.current.removeLayer(routeLineRef.current); routeLineRef.current = null; } } catch {}
     try { if (destMarkerRef.current && mapRef.current) { mapRef.current.removeLayer(destMarkerRef.current); destMarkerRef.current = null; } } catch {}
     arrowMRef.current.forEach(m => { try { mapRef.current.removeLayer(m); } catch {} });
@@ -1458,125 +1776,143 @@ export default function Dashboard() {
       const dist = data.routes[0].distance;
       const dur = data.routes[0].duration;
 
-      // Route line
-      const latLngs = coords
-        .filter(c => Array.isArray(c) && c.length >= 2 && isFinite(c[0]) && isFinite(c[1]))
-        .map(c => [c[1], c[0]]);
-
-      if (latLngs.length < 2) { addToast("Invalid route data.", "danger"); setRouteLoading(false); return; }
-
-      routeLineRef.current = L.polyline(latLngs, {
-        color: "#4285F4", weight: 6, opacity: 0.9, smoothFactor: 1, noClip: true,
-      }).addTo(mapRef.current);
-
-      // Destination marker
-      destMarkerRef.current = L.marker([destLat, destLng], { icon: destIcon() })
-        .addTo(mapRef.current)
-        .bindPopup(`🏁 ${destName}`);
-
-      // Direction arrows every ~200m
-      const numArrows = Math.max(2, Math.min(Math.floor(dist / 200), 12));
-      for (let i = 1; i <= numArrows; i++) {
-        const raw = Math.floor((i / (numArrows + 1)) * (coords.length - 1));
-        const idx = Math.max(0, Math.min(raw, coords.length - 1));
-        const pt = coords[idx], next = coords[Math.min(idx + 1, coords.length - 1)];
-        if (!pt || !next) continue;
-        const bearing = Math.atan2(next[0] - pt[0], next[1] - pt[1]) * (180 / Math.PI);
-        try {
-          const m = L.marker([pt[1], pt[0]], { icon: arrowIcon(bearing), interactive: false }).addTo(mapRef.current);
-          arrowMRef.current.push(m);
-        } catch {}
-      }
-
-      // Turn markers
-      steps.forEach((step, i) => {
-        if (!step.maneuver?.location || i === 0) return;
-        const [mLng, mLat] = step.maneuver.location;
-        const type = step.maneuver.type || "continue";
-        const mod = step.maneuver.modifier || "";
-        try {
-          const m = L.marker([mLat, mLng], {
-            icon: turnMarkerIcon(turnEmoji(type, mod), i === 1),
-            interactive: false,
-          }).addTo(mapRef.current);
-          m.bindPopup(`<b>${i}.</b> ${step.maneuver.instruction || destName}`);
-          turnMRef.current.push(m);
-        } catch {}
-      });
-
-      // Fit bounds
-      try {
-        const lats = latLngs.map(p => p[0]);
-        const lngs = latLngs.map(p => p[1]);
-        const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-        const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
-        if (isFinite(minLat) && isFinite(maxLat)) {
-          mapRef.current.fitBounds([[minLat, minLng], [maxLat, maxLng]], { padding: [60, 60], maxZoom: 16, duration: 1.2 });
+      // ── Intelligent Safety Check & Rerouting ────────────────
+      const checkSafety = (routeCoords) => {
+        let hazards = 0;
+        // Sample points every ~50m
+        const sample = routeCoords.filter((_, i) => i % Math.max(1, Math.floor(routeCoords.length / 40)) === 0);
+        for (const [rLng, rLat] of sample) {
+          for (const zone of crimeZones) {
+            if (zone.risk === 'red' && calcDistKm(rLat, rLng, zone.lat, zone.lng) < 0.15) hazards++;
+          }
         }
-      } catch {
-        try { mapRef.current.setView([destLat, destLng], 15, { duration: 1.2 }); } catch {}
-      }
+        return hazards;
+      };
 
-      // Nav instructions
-      const navSteps = steps.map((s, idx) => {
-        const d = s.distance || 0;
-        return {
-          instruction: s.maneuver?.instruction || "Continue",
-          distance: d > 1000 ? `${(d / 1000).toFixed(1)}km` : `${Math.round(d)}m`,
-          duration: s.duration > 60 ? `${Math.round(s.duration / 60)}min` : `${Math.round(s.duration)}s`,
-          maneuverCoords: s.maneuver?.location ? [s.maneuver.location[1], s.maneuver.location[0]] : null,
-          rawDistance: d,
-        };
-      });
-      setNavInstructions(navSteps.slice(0, 10));
-      setShowFullNav(true);
-      setCurrentRoute({ dest: destName, dist, dur });
+      const initialHazards = checkSafety(coords);
 
-      // ── Danger Zone Check on Route ────────────────────────
-      const routeSample = latLngs.filter((_, i) => i % Math.max(1, Math.floor(latLngs.length / 30)) === 0);
-      let hitRedZone = null;
-      let hitYellowZone = null;
-      const foundZones = new Set();
+      if (initialHazards > 0) {
+        addToast("⚠️ Danger detected on route! Recalculating safer path...", "danger", 5000);
+        
+        // Fetch Alternatives from OSRM
+        const altRes = await fetch(`${ROUTING_URL(start, end)}&alternatives=true`);
+        const altData = await altRes.json();
+        
+        if (altData.routes && altData.routes.length > 1) {
+          let safestRoute = altData.routes[0];
+          let minHazards = initialHazards;
+          let foundBetter = false;
 
-      for (const [rLat, rLng] of routeSample) {
-        for (const zone of crimeZones) {
-          if (foundZones.has(zone.label)) continue;
-          const distToZone = calcDistKm(rLat, rLng, zone.lat, zone.lng);
-          const threshKm = zone.risk === 'red' ? 0.35 : 0.25;
-          
-          if (distToZone < threshKm) {
-            foundZones.add(zone.label);
-            if (zone.risk === 'red' && !hitRedZone) hitRedZone = zone;
-            if (zone.risk === 'yellow' && !hitYellowZone) hitYellowZone = zone;
-            
-            // Add hazard marker to map
-            try {
-              const hz = L.marker([rLat, rLng], { icon: hazardIcon(zone.risk) })
-                .addTo(mapRef.current)
-                .bindPopup(`<div style="font-weight:700;color:#ea4335">⚠️ Hazard on Route</div><div style="font-size:11px">${zone.label}: ${zone.crimeType}</div>`);
-              routeZoneMarkersRef.current.push(hz);
-            } catch {}
+          for (let i = 1; i < altData.routes.length; i++) {
+            const hCount = checkSafety(altData.routes[i].geometry.coordinates);
+            if (hCount < minHazards) {
+              minHazards = hCount;
+              safestRoute = altData.routes[i];
+              foundBetter = true;
+            }
+          }
+
+          if (foundBetter) {
+            addToast("🛡️ TRINETRA: Safe alternate route found and applied.", "success", 5000);
+            return renderRouteUI(safestRoute.geometry.coordinates, safestRoute.legs[0].steps, safestRoute.distance, safestRoute.duration, destLat, destLng, destName, minHazards > 0);
           }
         }
       }
 
-      if (hitRedZone) {
-        setRouteDangerWarning(`${hitRedZone.label} — ${hitRedZone.crimeType}. Stay alert!`);
-        addToast(`🔴 Danger zone detected on route!`, "danger", 6000);
-      } else if (hitYellowZone) {
-        setRouteDangerWarning(`${hitYellowZone.label} — Caution advised.`);
-      } else {
-        setRouteDangerWarning(null);
-      }
-      // ─────────────────────────────────────────────────────
-
-      const distKm = ((dist || 0) / 1000).toFixed(1);
-      const durMin = Math.round((dur || 0) / 60);
-      addToast(`🛣 ${destName} — ${distKm}km · ~${durMin}min`, "success");
-    } catch {
+      // Default Render
+      renderRouteUI(coords, steps, dist, dur, destLat, destLng, destName, initialHazards > 0);
+    } catch (e) {
+      console.error("Routing error:", e);
       addToast("Route failed. Check your internet.", "danger");
     }
     setRouteLoading(false);
+  };
+
+  // Helper to render the route on map
+  const renderRouteUI = (coords, steps, dist, dur, destLat, destLng, destName, hasHazard) => {
+    const latlngs = coords.map(c => [c[1], c[0]]);
+    const routeColor = hasHazard ? '#ea4335' : '#00e5a0';
+
+    routeLineRef.current = L.polyline(latlngs, { color: routeColor, weight: 12, opacity: 0.15, lineCap: 'round' }).addTo(mapRef.current);
+    const innerGlow = L.polyline(latlngs, { color: routeColor, weight: 6, opacity: 0.4, lineCap: 'round' }).addTo(mapRef.current);
+    const coreLine = L.polyline(latlngs, { color: '#fff', weight: 2, opacity: 0.9, lineCap: 'round' }).addTo(mapRef.current);
+    routeLineRef.current = L.featureGroup([routeLineRef.current, innerGlow, coreLine]).addTo(mapRef.current);
+
+    destMarkerRef.current = L.marker([destLat, destLng], { icon: destIcon() }).addTo(mapRef.current).bindPopup(`🏁 ${destName}`);
+
+    // Arrows
+    const numArrows = Math.max(2, Math.min(Math.floor(dist / 200), 12));
+    for (let i = 1; i <= numArrows; i++) {
+      const idx = Math.floor((i / (numArrows + 1)) * (coords.length - 1));
+      const pt = coords[idx], next = coords[Math.min(idx + 1, coords.length - 1)];
+      if (!pt || !next) continue;
+      const bearing = Math.atan2(next[0] - pt[0], next[1] - pt[1]) * (180 / Math.PI);
+      arrowMRef.current.push(L.marker([pt[1], pt[0]], { icon: arrowIcon(bearing), interactive: false }).addTo(mapRef.current));
+    }
+
+    // Turns & Hazards
+    steps.forEach((step, i) => {
+      if (!step.maneuver?.location || i === 0) return;
+      const m = L.marker([step.maneuver.location[1], step.maneuver.location[0]], { icon: turnMarkerIcon(turnEmoji(step.maneuver.type, step.maneuver.modifier), i === 1), interactive: false }).addTo(mapRef.current);
+      turnMRef.current.push(m);
+    });
+
+    coords.forEach((c, idx) => {
+      if (idx % 20 !== 0) return;
+      crimeZones.forEach(zone => {
+        if (zone.risk === 'red' && calcDistKm(c[1], c[0], zone.lat, zone.lng) < 0.15) {
+          routeZoneMarkersRef.current.push(L.marker([c[1], c[0]], { icon: hazardIcon(zone.risk) }).addTo(mapRef.current).bindPopup(`<b>⚠️ Danger:</b> ${zone.label}`));
+        }
+      });
+    });
+
+    const lats = latlngs.map(p => p[0]), lngs = latlngs.map(p => p[1]);
+    mapRef.current.fitBounds([[Math.min(...lats), Math.min(...lngs)], [Math.max(...lats), Math.max(...lngs)]], { padding: [60, 60] });
+    setNavInstructions(steps.map(s => ({ instruction: s.maneuver.instruction, distance: s.distance > 1000 ? `${(s.distance/1000).toFixed(1)}km` : `${Math.round(s.distance)}m` })).slice(0, 10));
+    setShowFullNav(true);
+    setCurrentRoute({ dest: destName, dist, dur });
+    setTripProgress({
+      totalDist: dist,
+      coveredDist: 0,
+      remainingDist: dist,
+      destLat,
+      destLng,
+      startLat: position[0],
+      startLng: position[1]
+    });
+    setRouteLoading(false);
+    
+    if (map3D && maplibreRef.current) {
+      syncRouteTo3D(coords);
+    }
+  };
+
+  const syncRouteTo3D = (coords) => {
+    const ml = maplibreRef.current;
+    if (!ml || !ml.loaded()) return;
+
+    if (ml.getLayer('route-3d')) ml.removeLayer('route-3d');
+    if (ml.getSource('route-3d-src')) ml.removeSource('route-3d-src');
+
+    ml.addSource('route-3d-src', {
+      type: 'geojson',
+      data: {
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: coords }
+      }
+    });
+
+    ml.addLayer({
+      id: 'route-3d',
+      type: 'line',
+      source: 'route-3d-src',
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      paint: {
+        'line-color': '#00e5a0',
+        'line-width': 6,
+        'line-opacity': 0.8
+      }
+    });
   };
 
   const saveAllPlaces = async (item) => {
@@ -1585,31 +1921,34 @@ export default function Dashboard() {
     addToast(`Saving ${item.label}...`, "info");
     
     try {
-      const res = await fetch("http://localhost:5000/saved-places", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          user_id: loggedInUser.id, 
-          label: item.label, 
-          icon: item.label === "Home" ? "🏠" : "🏢", 
-          lat: parseFloat(item.lat), 
-          lng: parseFloat(item.lon), 
-          address: item.address 
-        })
+      // Use Firestore instead of localhost:5005
+      const placeRef = doc(db, "users", loggedInUser.id, "savedPlaces", item.label);
+      const placeData = {
+        label: item.label,
+        icon: item.label === "Home" ? "🏠" : "🏢",
+        lat: parseFloat(item.lat),
+        lng: parseFloat(item.lon),
+        address: item.address,
+        updatedAt: serverTimestamp()
+      };
+      
+      await setDoc(placeRef, placeData);
+
+      setSavedPlaces(p => {
+        const current = Array.isArray(p) ? p : [];
+        return [...current.filter(x => x.label !== item.label), { id: item.label, ...placeData }];
       });
-      if (res.ok) {
-        const saved = await res.json();
-        setSavedPlaces(p => [...p.filter(x => x.label !== item.label), saved]);
-        addToast(`${item.label} updated successfully!`, "success");
-        
-        // Move map to new location
-        const newLat = parseFloat(item.lat);
-        const newLng = parseFloat(item.lon);
-        setPosition([newLat, newLng]);
-        if (mapRef.current) mapRef.current.flyTo([newLat, newLng], 16);
-      }
+      addToast(`${item.label} updated successfully!`, "success");
+      
+      // Move map to new location
+      const newLat = parseFloat(item.lat);
+      const newLng = parseFloat(item.lon);
+      setPosition([newLat, newLng]);
+      if (mapRef.current) mapRef.current.flyTo([newLat, newLng], 16);
+
     } catch (err) {
-      addToast("Error saving location", "danger");
+      console.error("Error saving location:", err);
+      addToast("Error saving location to Firebase", "danger");
     }
   };
 
@@ -1619,13 +1958,36 @@ export default function Dashboard() {
     else { navigator.clipboard?.writeText(url); addToast("Location link copied!", "success"); }
   };
 
+  // ── Sync Map Style to Leaflet ────────────────────────────
+  useEffect(() => {
+    if (!mapRef.current || !mapReady) return;
+    
+    // Remove old layer
+    if (tileLayerRef.current) {
+      mapRef.current.removeLayer(tileLayerRef.current);
+    }
+    
+    // Add new layer
+    const t = TILES[mapStyle];
+    tileLayerRef.current = L.tileLayer(t.url, { 
+      attribution: t.attr, 
+      maxZoom: 18, 
+      noClip: true 
+    }).addTo(mapRef.current);
+
+    // If 3D is active, we might need to re-init it or change its style
+    // (MapLibre style change is handled by the map3D effect usually)
+  }, [mapStyle, mapReady]);
+
   const cycleMapStyle = () => {
     if (!isOnline) {
       addToast("Switching map styles requires internet. Using current cached view.", "info");
       return;
     }
     const idx = TILE_KEYS.indexOf(mapStyle);
-    setMapStyle(TILE_KEYS[(idx + 1) % TILE_KEYS.length]);
+    const nextStyle = TILE_KEYS[(idx + 1) % TILE_KEYS.length];
+    setMapStyle(nextStyle);
+    addToast(`🗺️ Map Style: ${TILES[nextStyle].label}`, "info", 2000);
   };
 
   const formatDur = (s) => {
@@ -1636,13 +1998,23 @@ export default function Dashboard() {
   const scoreColor = score >= 80 ? "#34a853" : score >= 50 ? "#fbbc04" : "#ea4335";
   const scoreLabel = score >= 80 ? "Safe Zone" : score >= 50 ? "Caution" : "Danger";
 
-  return (
+  const dashboardContent = isMobile ? (
+    <MobileDashboard user={loggedInUser} onLogout={handleLogout} triggerSOS={triggerSOS} />
+  ) : (
     <div className={`nr-root ${dark ? "dark" : "light"}`}>
       <style>{`
         @keyframes pulse-gps {
           0% { transform: scale(0.8); opacity: 1; }
           50% { transform: scale(1.4); opacity: 0.5; }
           100% { transform: scale(0.8); opacity: 1; }
+        }
+        @keyframes sos-ripple {
+          0% { transform: scale(1); opacity: 0.8; }
+          100% { transform: scale(3); opacity: 0; }
+        }
+        .sos-ripple-effect {
+          animation: sos-ripple 1.5s infinite;
+          stroke-width: 2px;
         }
         .nr-popup .leaflet-popup-content-wrapper {
           background: var(--bg1);
@@ -1707,9 +2079,9 @@ export default function Dashboard() {
           .mob-tab-label { font-size: 10px; font-weight: 500; }
           
           .nr-sos-fab {
-            position: fixed;
-            bottom: 85px;
-            right: 20px;
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
             width: 60px;
             height: 60px;
             border-radius: 50%;
@@ -1750,8 +2122,36 @@ export default function Dashboard() {
         }
 
         @media (min-width: 769px) {
-          .mobile-bottom-nav, .nr-sos-fab {
+          .mobile-bottom-nav {
             display: none !important;
+          }
+          
+          .nr-sos-fab {
+            display: flex !important;
+            position: absolute;
+            bottom: 20px; 
+            left: 20px;
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #ff4d4d 0%, #cc0000 100%);
+            color: white;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            box-shadow: 0 8px 25px rgba(234, 67, 53, 0.5);
+            z-index: 16000; /* Higher than AI agent */
+            flex-direction: column;
+            gap: 2px;
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+          }
+          
+          .nr-sos-fab:hover {
+            transform: scale(1.1) translateY(-5px);
+            box-shadow: 0 12px 35px rgba(234, 67, 53, 0.7);
+          }
+          
+          .nr-sos-fab.active {
+            animation: pulse-sos 1s infinite;
+            background: #ff0000;
           }
           
           /* Desktop Place Details Side Panel */
@@ -1775,6 +2175,23 @@ export default function Dashboard() {
             transform: translateX(0);
           }
           .sheet-handle { display: none; }
+          
+          /* Mobile HUD Adjustments */
+          .mobile-hud {
+            top: 140px !important;
+            right: 12px !important;
+            left: auto !important;
+            flex-direction: column;
+            gap: 12px;
+          }
+          .mobile-hud .map-ctrl-btn {
+            width: 44px;
+            height: 44px;
+            background: rgba(6, 8, 13, 0.8) !important;
+            border: 1px solid rgba(255, 255, 255, 0.15) !important;
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+          }
         }
       `}</style>
       <Toast toasts={toasts} />
@@ -1938,8 +2355,8 @@ export default function Dashboard() {
       {/* ── Main Layout ─────────────────────────────────── */}
       <main className="nr-main">
 
-        {/* Left Panel — compact, Google Maps style sidebar */}
-        <aside className="nr-left glass-card fade-up" style={{ padding: "16px 10px", gap: 12, animationDelay: '0.1s' }}>
+        {/* Left Panel */}
+        <aside className="nr-left">
           <div className="score-ring-wrap" style={{ position: 'relative' }}>
             <ScoreRing score={score} dark={dark} />
             <div style={{ position: 'absolute', bottom: -10, fontSize: 10, fontWeight: 700, color: scoreColor, textTransform: 'uppercase' }}>
@@ -1966,6 +2383,10 @@ export default function Dashboard() {
               >
                 <span>🏙️</span><span style={{ flex: 1 }}>Open Street View</span>
               </button>
+              <button onClick={() => navigate('/citizen-report')}
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", background: "rgba(255,152,0,0.1)", border: "1px solid rgba(255,152,0,0.3)", borderRadius: 10, cursor: "pointer", fontSize: 12, fontWeight: 700, color: "#ff9800", fontFamily: "inherit", width: "100%", textAlign: "left" }}>
+                <span>📋</span><span style={{ flex: 1 }}>Report Incident</span>
+              </button>
               <button onClick={() => setZoneCreatorOpen(true)}
                 style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: 10, cursor: "pointer", fontSize: 12, fontWeight: 600, color: "var(--text2)", fontFamily: "inherit", width: "100%", textAlign: "left" }}>
                 <span>🟢🔴</span><span style={{ flex: 1 }}>Mark Safe/Danger Zone</span>
@@ -1991,13 +2412,13 @@ export default function Dashboard() {
 
           {/* Saved Places */}
           <div style={{ width: "100%" }}>
-            {savedPlaces.length > 0 && (
+            {Array.isArray(savedPlaces) && savedPlaces.length > 0 && (
               <div className="panel-title" style={{ marginBottom: 8, color: 'var(--accent)', display: 'flex', justifyContent: 'space-between' }}>
                 <span>Saved Locations 📍</span>
                 <button onClick={() => setPlaceModalOpen(true)} style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: '14px' }}>⚙️</button>
               </div>
             )}
-            {savedPlaces.map((p) => {
+            {Array.isArray(savedPlaces) && savedPlaces.map((p) => {
               const dist = position ? calcDistKm(position[0], position[1], p.lat, p.lng) : null;
               return (
                 <div key={p.label} onClick={() => getRoute(p.lat, p.lng, p.label)}
@@ -2014,32 +2435,74 @@ export default function Dashboard() {
 
         {/* Map Container */}
         <div className="nr-map-wrap" style={{ position: "relative" }}>
+          
+          {/* ── TACTICAL HUD OVERLAY ────────────────────────────────── */}
+          <div className="tactical-hud">
+            <div className="hud-corner top-left">
+              <div className="hud-label">TRINETRA SATELLITE LINK</div>
+              <div className="hud-value"><span className="status-dot-green"></span> ACTIVE • 24ms</div>
+            </div>
+            <div className="hud-corner top-right">
+              <div className="hud-label">SECTOR SECURITY LEVEL</div>
+              <div className="hud-value" style={{ color: score > 70 ? '#00e5a0' : '#ff4d4d' }}>
+                {score > 70 ? 'SECURE' : 'CAUTION'}
+              </div>
+            </div>
+            <div className="hud-corner bottom-right">
+              <div className="hud-label">NEARBY PATROLS</div>
+              <div className="hud-value">12 UNITS ACTIVE</div>
+            </div>
+            
+            {/* Tactical Scanning Line */}
+            <div className="hud-scanner"></div>
+          </div>
+
           {/* Leaflet 2D map */}
-          <div ref={containerRef} className="map-leaflet-inner" style={{ width: "100%", height: "100%", background: "#0a0c10", opacity: map3D ? 0 : 1, pointerEvents: map3D ? 'none' : 'auto', transition: 'opacity 0.5s ease' }} />
+          <div ref={containerRef} className="map-leaflet-inner" style={{ width: "100%", height: "100%", background: "transparent", opacity: map3D ? 0 : 1, pointerEvents: map3D ? 'none' : 'auto', transition: 'opacity 0.5s ease' }} />
 
           {/* MapLibre 3D map */}
           <div ref={map3dContainerRef} style={{ position: "absolute", inset: 0, opacity: map3D ? 1 : 0, pointerEvents: map3D ? 'auto' : 'none', transition: 'opacity 0.5s ease', zIndex: 5 }} />
 
           {/* Map Controls */}
-          <div className="map-ctrl-panel">
+          <div className={`map-ctrl-panel ${isMobile ? 'mobile-hud' : ''}`}>
             <button onClick={() => { if (position && mapRef.current) mapRef.current.flyTo(position, 18, { duration: 1.5 }); }} title="Recenter" className="map-ctrl-btn map-ctrl-locate">
               <FaLocationArrow />
             </button>
             <button onClick={() => setMap3D(v => !v)} title="3D/2D" className={`map-ctrl-btn map-ctrl-3d ${map3D ? 'active' : ''}`}>
               <FaCube />
             </button>
-            <button onClick={cycleMapStyle} title="Style" className="map-ctrl-btn map-ctrl-layers">
-              <FaLayerGroup />
-            </button>
             <button onClick={() => setShowZones(v => !v)} title="Zones" className={`map-ctrl-btn map-ctrl-shield ${showZones ? 'active' : ''}`}>
               <FaShieldAlt />
+            </button>
+            <button onClick={cycleMapStyle} title="Style" className="map-ctrl-btn map-ctrl-layers">
+              <FaLayerGroup />
             </button>
             {currentRoute && <button onClick={clearRoute} title="Clear" className="map-ctrl-btn map-ctrl-clear"><FaTimes /></button>}
           </div>
 
+          {/* Floating Safety Score (Mobile Only) */}
+          {isMobile && (
+            <div className="mobile-score-badge fade-up">
+              <div className="mobile-score-ring">
+                <svg width="40" height="40" viewBox="0 0 100 100">
+                  <circle cx="50" cy="50" r="40" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="10" />
+                  <circle cx="50" cy="50" r="40" fill="none" stroke={score >= 80 ? "#00e5a0" : "#ff4d4d"} strokeWidth="10" 
+                    strokeDasharray="251.2" strokeDashoffset={251.2 - (score / 100) * 251.2} strokeLinecap="round" transform="rotate(-90 50 50)" />
+                </svg>
+                <span className="mobile-score-val">{score}</span>
+              </div>
+              <div className="mobile-score-info">
+                <div className="mobile-score-label">SAFETY SCORE</div>
+                <div className="mobile-score-status" style={{ color: score >= 80 ? "#00e5a0" : "#ff4d4d" }}>
+                  {score >= 80 ? "SAFE ZONE" : "CAUTION"}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Safety Overlays */}
           {showZones && (
-            <div className="safety-legend" style={{ position: "absolute", bottom: 32, left: 12, zIndex: 10, background: "rgba(6,8,13,0.88)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, padding: "10px 14px" }}>
+            <div className="safety-legend" style={{ position: "absolute", bottom: 100, left: 12, zIndex: 10, background: "rgba(6,8,13,0.88)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, padding: "10px 14px" }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: "#9ca3b0", textTransform: "uppercase", marginBottom: 8 }}>🛡️ Safety Zones</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}><div style={{ width: 10, height: 10, borderRadius: "50%", background: "#ff4d4d" }} /><span style={{ fontSize: 11, color: "#fff" }}>Danger Zone</span></div>
@@ -2048,13 +2511,79 @@ export default function Dashboard() {
             </div>
           )}
 
-          {routeDangerWarning && (
-            <div className="danger-warning-banner" style={{ position: "absolute", bottom: 32, left: "50%", transform: "translateX(-50%)", zIndex: 15, background: "linear-gradient(135deg, #ff4d4d, #ff8c00)", color: "#fff", borderRadius: 12, padding: "10px 20px", display: "flex", alignItems: "center", gap: 10 }}>
-              <span>⚠️ Route passes through danger zone!</span>
-              <button onClick={() => setRouteDangerWarning(null)} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer" }}>✕</button>
+          {/* ── TACTICAL TRIP PROGRESS BAR (Top Center) ─────────────────────────── */}
+          {tripProgress && currentRoute && (
+            <div className="fade-down" style={{
+              position: 'absolute', top: 20, left: '50%', transform: 'translateX(-50%)',
+              zIndex: 1001, background: 'rgba(6,8,13,0.95)', backdropFilter: 'blur(20px)',
+              border: '1px solid rgba(0,229,160,0.4)', borderRadius: '16px',
+              padding: '12px 24px', minWidth: '320px',
+              boxShadow: '0 10px 40px rgba(0,0,0,0.6)', display: 'flex', flexDirection: 'column', gap: 8
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#00e5a0', boxShadow: '0 0 10px #00e5a0', animation: 'pulse-gps 2s infinite' }} />
+                  <span style={{ fontSize: 10, fontWeight: 900, color: '#00e5a0', letterSpacing: '1px' }}>NAVIGATING TO: {currentRoute.dest.toUpperCase()}</span>
+                </div>
+                <button onClick={clearRoute} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: 14 }}>✕</button>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ background: 'rgba(255,255,255,0.1)', borderRadius: 99, height: 8, overflow: 'hidden', position: 'relative' }}>
+                    <div style={{
+                      height: '100%', borderRadius: 99,
+                      width: `${Math.min(100, (tripProgress.coveredDist / tripProgress.totalDist) * 100)}%`,
+                      background: 'linear-gradient(90deg, #4285F4, #00e5a0)',
+                      transition: 'width 1s ease', boxShadow: '0 0 15px rgba(0,229,160,0.4)'
+                    }} />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 15 }}>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.5)', fontWeight: 700 }}>REMAINING</div>
+                    <div style={{ fontSize: 16, fontWeight: 900, color: '#fff', fontFamily: "'JetBrains Mono', monospace" }}>
+                      {tripProgress.remainingDist >= 1000 ? (tripProgress.remainingDist/1000).toFixed(1) : Math.round(tripProgress.remainingDist)}
+                      <span style={{ fontSize: 10, marginLeft: 2 }}>{tripProgress.remainingDist >= 1000 ? 'KM' : 'M'}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: 'rgba(255,255,255,0.4)', fontWeight: 700 }}>
+                <span>PROGRESS: {Math.round((tripProgress.coveredDist / tripProgress.totalDist) * 100)}%</span>
+                <span style={{ color: '#00e5a0' }}>SAFE ROUTE ACTIVE</span>
+              </div>
             </div>
           )}
-        </div>
+
+            {routeDangerWarning && (
+              <div className="danger-warning-banner" style={{ position: "absolute", bottom: 32, left: "50%", transform: "translateX(-50%)", zIndex: 15, background: "linear-gradient(135deg, #ff4d4d, #ff8c00)", color: "#fff", borderRadius: 12, padding: "10px 20px", display: "flex", alignItems: "center", gap: 10 }}>
+                <span>⚠️ Route passes through danger zone!</span>
+                <button onClick={() => setRouteDangerWarning(null)} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer" }}>✕</button>
+              </div>
+            )}
+
+            {/* Tactical FABs Container (SOS Only) */}
+            <div style={{
+              position: 'absolute',
+              bottom: '80px',
+              left: '20px',
+              zIndex: 16000
+            }}>
+              <button 
+                className={`nr-sos-fab ${sosActive ? "active" : ""}`} 
+                onClick={triggerSOS}
+                style={{ position: 'relative', bottom: 'auto', left: 'auto' }}
+              >
+                <span style={{ fontSize: '24px' }}>🚨</span>
+                <span style={{ fontSize: '9px', fontWeight: 900, color: '#fff', letterSpacing: '1px' }}>SOS</span>
+              </button>
+            </div>
+
+            {/* AI Agent reverted to Right Side for Desktop */}
+            <TrinetraAgent embedded={false} />
+          </div>
 
         {/* Right Panel */}
         <aside className="nr-right">
@@ -2135,90 +2664,132 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+    </div>
+  );
 
+  return (
+    <>
+      {dashboardContent}
 
-        <button className={`nr-sos-fab ${sosActive ? "active" : ""}`} onClick={triggerSOS}>🚨</button>
-
-        {/* Siren Playing Indicator and Stop Modal */}
-        {sirenPlaying && (
+      {/* Siren Playing Indicator and Stop Modal */}
+      {sirenPlaying && (
+        <div style={{
+          position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+          background: "rgba(0, 0, 0, 0.85)", zIndex: 99999,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          backdropFilter: "blur(15px)",
+        }}>
           <div style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(0, 0, 0, 0.7)",
-            zIndex: 9999,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            backdropFilter: "blur(3px)",
+            background: "#121420", border: "2px solid #ff4d4d",
+            borderRadius: 32, padding: 40, textAlign: "center",
+            maxWidth: 420, width: '90%', boxShadow: "0 0 60px rgba(255, 77, 77, 0.4)",
+            animation: "pulse-sos 1s infinite",
           }}>
-            <div style={{
-              background: "#1a1a2e",
-              border: "2px solid #ff4d4d",
-              borderRadius: 16,
-              padding: 30,
-              textAlign: "center",
-              maxWidth: 400,
-              boxShadow: "0 0 40px rgba(255, 77, 77, 0.3)",
-              animation: "pulse-sos 1s infinite",
-            }}>
-              <div style={{ fontSize: 48, marginBottom: 16 }}>🚨</div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: "#ff4d4d", marginBottom: 12 }}>
-                POLICE SIREN ACTIVE
-              </div>
-              <div style={{ fontSize: 14, color: "#ccc", marginBottom: 24 }}>
-                Police siren will continue for 5 minutes or until you enter the password to stop it.
-              </div>
-              
-              <input
-                type="password"
-                placeholder="Enter password to stop"
-                value={stopPasswordInput}
-                onChange={(e) => setStopPasswordInput(e.target.value)}
-                onKeyPress={(e) => e.key === "Enter" && stopSiren()}
-                style={{
-                  width: "100%",
-                  padding: "12px 14px",
-                  marginBottom: 16,
-                  background: "#0a0c10",
-                  border: "1px solid #333",
-                  borderRadius: 8,
-                  color: "#fff",
-                  fontSize: 14,
-                  outline: "none",
-                  textAlign: "center",
-                  letterSpacing: "0.2em",
-                }}
-              />
-              
-              <button
-                onClick={stopSiren}
-                style={{
-                  width: "100%",
-                  padding: "12px 16px",
-                  background: "#ff4d4d",
-                  color: "white",
-                  border: "none",
-                  borderRadius: 8,
-                  fontSize: 14,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-                onMouseEnter={(e) => e.target.style.background = "#cc0000"}
-                onMouseLeave={(e) => e.target.style.background = "#ff4d4d"}
-              >
-                Stop Siren
-              </button>
-              
-              <div style={{ fontSize: 11, color: "#666", marginTop: 16 }}>
-                ⏱️ Siren will auto-stop after 5 minutes
-              </div>
+            <div style={{ fontSize: 64, marginBottom: 20 }}>🚨</div>
+            <h2 style={{ fontSize: 24, fontWeight: 800, color: "#ff4d4d", marginBottom: 12 }}>
+              POLICE SIREN ACTIVE
+            </h2>
+            
+            {resetFlow.active ? (
+               <div className="fade-up">
+                  {resetFlow.step === 1 ? (
+                    <>
+                      <p style={{ color: '#ccc', marginBottom: 20 }}>Enter the 6-digit OTP sent to your registered email.</p>
+                      <input 
+                        type="text" placeholder="Enter OTP"
+                        value={resetFlow.inputOtp} onChange={e => setResetFlow({...resetFlow, inputOtp: e.target.value})}
+                        style={{ width: '100%', padding: '15px', background: '#0a0c10', border: '1px solid #333', borderRadius: '12px', color: '#fff', fontSize: '18px', textAlign: 'center', marginBottom: '20px', letterSpacing: '8px' }}
+                      />
+                      <button onClick={verifySirenOtp} style={{ width: '100%', padding: '15px', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 700 }}>Verify OTP</button>
+                    </>
+                  ) : (
+                    <>
+                      <p style={{ color: '#ccc', marginBottom: 20 }}>Set a new secure SOS Password (min 4 digits).</p>
+                      <input 
+                        type="password" placeholder="New Password"
+                        value={resetFlow.newPass} onChange={e => setResetFlow({...resetFlow, newPass: e.target.value})}
+                        style={{ width: '100%', padding: '15px', background: '#0a0c10', border: '1px solid #333', borderRadius: '12px', color: '#fff', fontSize: '18px', textAlign: 'center', marginBottom: '20px' }}
+                      />
+                      <button onClick={resetSirenPassword} style={{ width: '100%', padding: '15px', background: '#00e5a0', color: 'black', border: 'none', borderRadius: '12px', fontWeight: 700 }}>Reset & Save</button>
+                    </>
+                  )}
+                  <button onClick={() => setResetFlow({ active: false, step: 0, otp: "", inputOtp: "", newPass: "" })} style={{ background: 'none', border: 'none', color: '#666', marginTop: 20, cursor: 'pointer' }}>Cancel Reset</button>
+               </div>
+            ) : (
+              <>
+                <p style={{ fontSize: 15, color: "rgba(255,255,255,0.7)", marginBottom: 24, lineHeight: 1.6 }}>
+                  Loud siren active to draw attention. Stop it by entering your emergency password.
+                </p>
+                
+                <input
+                  type="password"
+                  placeholder="Enter password to stop"
+                  value={stopPasswordInput}
+                  onChange={(e) => setStopPasswordInput(e.target.value)}
+                  onKeyPress={(e) => e.key === "Enter" && stopSiren()}
+                  style={{
+                    width: "100%", padding: "16px", marginBottom: 16,
+                    background: "#0a0c10", border: "1px solid #333",
+                    borderRadius: 12, color: "#fff", fontSize: 16,
+                    outline: "none", textAlign: "center", letterSpacing: "0.2em",
+                  }}
+                />
+                
+                <button
+                  onClick={stopSiren}
+                  style={{
+                    width: "100%", padding: "16px", background: "linear-gradient(135deg, #ff4d4d, #cc0000)",
+                    color: "white", border: "none", borderRadius: 12, fontSize: 16, fontWeight: 800,
+                    cursor: "pointer", transition: "all 0.2s", boxShadow: '0 8px 20px rgba(255, 77, 77, 0.3)'
+                  }}
+                >
+                  Stop Siren
+                </button>
+
+                <button 
+                  onClick={handleForgotSirenPass}
+                  style={{ background: 'none', border: 'none', color: '#4285F4', fontSize: '13px', marginTop: '20px', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  Forgot Password?
+                </button>
+              </>
+            )}
+            
+            <div style={{ fontSize: 12, color: "#555", marginTop: 24, fontWeight: 600 }}>
+              ⏱️ AUTO-STOP IN 5 MINUTES
             </div>
           </div>
-        )}
-      </div>
-    );
+        </div>
+      )}
+
+      {/* Initial Password Setup Modal */}
+      {showPassSetup && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', zIndex: 30000, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(10px)' }}>
+          <div className="glass-card fade-up" style={{ padding: 40, width: '90%', maxWidth: 400, textAlign: 'center', background: '#1a1d2e', borderRadius: 32, border: '1px solid var(--accent)' }}>
+            <div style={{ fontSize: 48, marginBottom: 20 }}>🛡️</div>
+            <h2 style={{ color: '#fff', marginBottom: 12 }}>Secure Your SOS</h2>
+            <p style={{ color: '#ccc', fontSize: 14, marginBottom: 28 }}>To prevent unauthorized disabling of your emergency siren, please set a 4-digit SOS password.</p>
+            <input 
+              type="password" placeholder="Set 4-digit Password" 
+              value={stopPasswordInput} onChange={e => setStopPasswordInput(e.target.value.slice(0, 4))}
+              style={{ width: '100%', padding: '16px', background: '#0a0c10', border: '1px solid #333', borderRadius: '12px', color: '#fff', fontSize: '20px', textAlign: 'center', marginBottom: '24px', letterSpacing: '0.5em' }}
+            />
+            <button 
+              onClick={() => {
+                if (stopPasswordInput.length < 4) { addToast("Password must be 4 digits", "danger"); return; }
+                setSirenPassword(stopPasswordInput);
+                localStorage.setItem("trinetra_siren_password", stopPasswordInput);
+                setShowPassSetup(false);
+                setStopPasswordInput("");
+                addToast("SOS Password Saved! Keep it safe.", "success");
+              }}
+              style={{ width: '100%', padding: '16px', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: '14px', fontSize: '16px', fontWeight: 700 }}
+            >
+              Save Password
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
 }

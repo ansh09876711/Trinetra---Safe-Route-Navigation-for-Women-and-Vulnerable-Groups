@@ -1,8 +1,11 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { FaBars, FaTimes } from "react-icons/fa";
+import { FaBars, FaTimes, FaExclamationTriangle, FaPaperPlane, FaCheckCircle, FaUserSecret, FaMapMarkerAlt, FaLock } from "react-icons/fa";
+import { db } from "../firebase";
+import { collection, doc, setDoc, Timestamp } from "firebase/firestore";
 import Logo from "../components/Logo";
 import ThemeToggle from "../components/ThemeToggle";
+import HowItWorksWomenModal from "../components/HowItWorksWomenModal";
 import "./Landing.css";
 
 const FEATURES = [
@@ -41,6 +44,73 @@ export default function Landing() {
   const [currentHeroImage, setCurrentHeroImage] = useState(0);
   const [showScrollTop, setShowScrollTop] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportForm, setReportForm] = useState({ type: 'SOS', msg: '', location: '' });
+  const [reportStatus, setReportStatus] = useState({ loading: false, success: false });
+  const [showWomenFlow, setShowWomenFlow] = useState(false);
+
+  const handleFileReport = async (e) => {
+    e.preventDefault();
+    setReportStatus({ loading: true, success: false });
+    try {
+      const reportRef = doc(collection(db, "reports"));
+      await setDoc(reportRef, {
+        id: reportRef.id,
+        type: reportForm.type,
+        description: reportForm.msg,
+        locationName: reportForm.location,
+        timestamp: Date.now(),
+        status: "ACTIVE",
+        userName: "CITIZEN_ANON"
+      });
+
+      // TRIGGER ESCALATIONS
+      if (reportForm.type === 'CYBER ABUSE') {
+        const alertRef = doc(collection(db, "divisional_alerts"));
+        await setDoc(alertRef, {
+          source: "LANDING_PAGE_PORTAL",
+          targetDivision: "5",
+          type: "CYBER_THREAT_DETECTION",
+          message: `URGENT: Cyber Abuse reported from Landing Portal. Payload: ${reportForm.msg}`,
+          timestamp: Date.now(),
+          priority: "CRITICAL",
+          status: "ACTIVE"
+        });
+      }
+
+      const commAlertRef = doc(collection(db, "divisional_alerts"));
+      await setDoc(commAlertRef, {
+        source: "LANDING_PAGE_PORTAL",
+        targetDivision: "7",
+        type: "PUBLIC_EMERGENCY",
+        message: `New ${reportForm.type} broadcasted from public portal.`,
+        timestamp: Date.now(),
+        priority: "HIGH",
+        status: "ACTIVE"
+      });
+
+      setReportStatus({ loading: false, success: true });
+      setTimeout(() => {
+        setShowReportModal(false);
+        setReportStatus({ loading: false, success: false });
+        setReportForm({ type: 'SOS', msg: '', location: '' });
+      }, 2000);
+    } catch (err) {
+      console.error(err);
+      setReportStatus({ loading: false, success: false });
+    }
+  };
+
+  // Mobile detection state
+  const [isMobileView, setIsMobileView] = useState(window.innerWidth <= 768);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobileView(window.innerWidth <= 768);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   useEffect(() => {
     const handleScroll = () => setShowScrollTop(window.scrollY > 500);
@@ -97,6 +167,25 @@ export default function Landing() {
     });
 
     observerRef.current = observer;
+
+    // Mobile permission request logic
+    const requestNativePermissions = async () => {
+      // Use standard browser prompts which Capacitor handles
+      try {
+        if (window.navigator.geolocation) {
+          window.navigator.geolocation.getCurrentPosition(() => { }, () => { });
+        }
+        if (window.navigator.mediaDevices && window.navigator.mediaDevices.getUserMedia) {
+          window.navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(s => s.getTracks().forEach(t => t.stop()))
+            .catch(() => { });
+        }
+      } catch (e) {
+        console.log("Permission error:", e);
+      }
+    };
+    requestNativePermissions();
+
     return () => observer.disconnect();
   }, []);
 
@@ -117,6 +206,12 @@ export default function Landing() {
           </Link>
           <button className="nav-link-item" onClick={() => document.getElementById("testimonials")?.scrollIntoView({ behavior: "smooth" })}>
             ⭐ Reviews
+          </button>
+          <Link to="/citizen-report" style={{ textDecoration: 'none' }}>
+            <button className="nav-link-item" style={{ color: '#ff4d4d' }}>🚨 Emergency</button>
+          </Link>
+          <button className="nav-link-item" onClick={() => setShowWomenFlow(true)}>
+            <span className="nav-dot" style={{ backgroundColor: '#ff4d4d' }} /> Women Safety Flow
           </button>
         </div>
 
@@ -149,16 +244,43 @@ export default function Landing() {
                 <button className="nav-link-item" style={{ textAlign: 'left' }} onClick={() => setMobileMenuOpen(false)}>⚡ How It Works</button>
               </Link>
               <button className="nav-link-item" style={{ textAlign: 'left' }} onClick={() => { document.getElementById("testimonials")?.scrollIntoView({ behavior: "smooth" }); setMobileMenuOpen(false); }}>⭐ Reviews</button>
+              <Link to="/citizen-report" style={{ textDecoration: 'none' }}>
+                <button className="nav-link-item" style={{ textAlign: 'left', color: '#ff4d4d' }} onClick={() => setMobileMenuOpen(false)}>🚨 Emergency</button>
+              </Link>
               <Link to="/login" style={{ textDecoration: 'none' }}>
                 <button className="landing-nav-btn-secondary" style={{ width: '100%', background: 'var(--bg2)', border: '1px solid var(--border)', color: 'var(--text)', padding: '12px', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}>Login</button>
               </Link>
               <Link to="/register" style={{ textDecoration: 'none' }}>
                 <button className="landing-nav-btn" style={{ width: '100%', padding: '12px' }}>Register →</button>
               </Link>
+              <button className="nav-link-item" style={{ textAlign: 'left', color: '#ff4d4d' }} onClick={() => { setShowWomenFlow(true); setMobileMenuOpen(false); }}>🛡️ Women Safety Flow</button>
             </div>
           </div>
         )}
       </nav>
+
+      {/* ── NEW: GLOBAL SAFETY PULSE ── */}
+      <div style={{ 
+          background: 'rgba(0, 229, 160, 0.05)', 
+          borderBottom: '1px solid rgba(0, 229, 160, 0.1)', 
+          padding: '10px 20px', 
+          display: 'flex', 
+          justifyContent: 'center', 
+          alignItems: 'center', 
+          gap: '15px',
+          position: 'relative',
+          zIndex: 10,
+          overflow: 'hidden'
+      }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ width: '8px', height: '8px', background: '#00e5a0', borderRadius: '50%', boxShadow: '0 0 10px #00e5a0' }}></div>
+              <span style={{ fontSize: '11px', fontWeight: 900, color: '#00e5a0', letterSpacing: '2px' }}>LIVE SAFETY PULSE: 94% SECURE</span>
+          </div>
+          <div style={{ width: '1px', height: '15px', background: 'rgba(255,255,255,0.1)' }}></div>
+          <p style={{ fontSize: '10px', color: 'rgba(255,255,255,0.5)', margin: 0, fontWeight: 500, letterSpacing: '1px' }}>
+              CURRENT STATUS: <span style={{ color: '#fff' }}>HEAVY PATROLLING IN SECTOR 7</span>
+          </p>
+      </div>
 
       {/* ── Hero ── */}
       <section className="landing-hero">
@@ -193,6 +315,9 @@ export default function Landing() {
               <Link to="/register" style={{ textDecoration: 'none' }}>
                 <button className="hero-cta-primary">🚀 Get Started — It's Free</button>
               </Link>
+              <button className="hero-cta-secondary" onClick={() => setShowWomenFlow(true)}>
+                ⚡ How it Works for Women
+              </button>
               <button className="hero-cta-secondary" onClick={() => document.getElementById("features").scrollIntoView({ behavior: "smooth" })}>
                 Learn More ↓
               </button>
@@ -339,14 +464,21 @@ export default function Landing() {
       <section id="how-it-works" className="landing-how fade-up">
         <div className="landing-section-header">
           <div className="landing-section-tag">The Reality</div>
-          <h2 style={{ color: "var(--text)" }}>Women's Safety Crisis in India</h2>
+          <h2 style={{ color: "var(--text)", fontSize: "clamp(24px, 5vw, 32px)", lineHeight: 1.2 }}>Women's Safety Crisis in India</h2>
           <p style={{ color: "var(--text3)", fontSize: 14, marginTop: 8, maxWidth: 560, margin: "8px auto 0" }}>
             Every statistic below represents a real woman. TRINETRA exists to change these numbers.
           </p>
         </div>
 
         {/* Crisis Stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16, maxWidth: 860, margin: "0 auto 48px" }}>
+        <div className="mobile-stats-grid-fix" style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+          gap: 12,
+          maxWidth: 860,
+          margin: "0 auto 48px",
+          padding: "0 10px"
+        }}>
           {[
             { num: "4,45,256+", label: "Crimes against women — NCRB Annual Report", color: "#ff4d4d", icon: "📊" },
             { num: "1 in 3", label: "Women face harassment in public transport", color: "#ff8c00", icon: "🚌" },
@@ -355,12 +487,12 @@ export default function Landing() {
           ].map((stat, i) => (
             <div key={i} style={{
               background: "var(--bg2)", border: `1px solid ${stat.color}30`,
-              borderRadius: 16, padding: "20px 16px", textAlign: "center",
+              borderRadius: 16, padding: "16px 12px", textAlign: "center",
               boxShadow: `0 0 20px ${stat.color}10`,
             }}>
-              <div style={{ fontSize: 26, marginBottom: 8 }}>{stat.icon}</div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: stat.color, marginBottom: 6, lineHeight: 1 }}>{stat.num}</div>
-              <div style={{ fontSize: 11, color: "var(--text3)", lineHeight: 1.5 }}>{stat.label}</div>
+              <div style={{ fontSize: 24, marginBottom: 8 }}>{stat.icon}</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: stat.color, marginBottom: 4, lineHeight: 1 }}>{stat.num}</div>
+              <div style={{ fontSize: 10, color: "var(--text3)", lineHeight: 1.3 }}>{stat.label}</div>
             </div>
           ))}
         </div>
@@ -378,48 +510,75 @@ export default function Landing() {
           </div>
         </div>
 
-        {/* Solution Stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16, maxWidth: 860, margin: "0 auto 40px" }}>
-          {[
-            { num: "<3 sec", label: "SOS alert sent to all contacts", color: "#00e5a0", icon: "⚡" },
-            { num: "5 km", label: "Nearest safe stations always visible", color: "#0095ff", icon: "🚉" },
-            { num: "24/7", label: "Live GPS tracking & voice navigation", color: "#4285F4", icon: "📍" },
-            { num: "0 data", label: "Needed offline — SMS fallback works", color: "#00e5a0", icon: "📴" },
-          ].map((stat, i) => (
-            <div key={i} style={{
-              background: `${stat.color}08`,
-              border: `1px solid ${stat.color}30`,
-              borderRadius: 16, padding: "20px 16px", textAlign: "center",
-              boxShadow: `0 0 20px ${stat.color}08`,
-            }}>
-              <div style={{ fontSize: 26, marginBottom: 8 }}>{stat.icon}</div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: stat.color, marginBottom: 6, lineHeight: 1 }}>{stat.num}</div>
-              <div style={{ fontSize: 11, color: "var(--text3)", lineHeight: 1.5 }}>{stat.label}</div>
+        {/* --- NEW TACTICAL PIPELINE --- */}
+        <div style={{ maxWidth: '1000px', margin: '0 auto 60px', position: 'relative', zIndex: 2 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobileView ? '1fr' : 'repeat(4, 1fr)', gap: '20px' }}>
+                {[
+                    { step: "01", title: "DETECTION", desc: "AI monitors GPS drift & voice distress signals.", icon: "🛰️", color: "#00e5a0" },
+                    { step: "02", title: "ANALYSIS", desc: "Risk scoring engine evaluates surroundings.", icon: "🧠", color: "#0095ff" },
+                    { step: "03", title: "ACTION", desc: "Instant SOS & Safe Station routing activated.", icon: "⚡", color: "#ff8c00" },
+                    { step: "04", title: "RESOLUTION", desc: "Police & Emergency Contacts notified in 1s.", icon: "🛡️", color: "#ff4d4d" }
+                ].map((item, i) => (
+                    <div key={i} style={{ 
+                        background: 'rgba(255,255,255,0.03)', 
+                        border: `1px solid ${item.color}30`, 
+                        borderRadius: '24px', 
+                        padding: '30px', 
+                        textAlign: 'center',
+                        position: 'relative',
+                        transition: '0.3s'
+                    }} onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.06)'} onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}>
+                        <div style={{ position: 'absolute', top: '15px', right: '20px', fontSize: '10px', fontWeight: 900, color: item.color, opacity: 0.5 }}>{item.step}</div>
+                        <div style={{ fontSize: '32px', marginBottom: '15px' }}>{item.icon}</div>
+                        <h3 style={{ fontSize: '14px', fontWeight: 900, letterSpacing: '2px', color: '#fff', marginBottom: '10px' }}>{item.title}</h3>
+                        <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.4)', lineHeight: '1.6' }}>{item.desc}</p>
+                        
+                        {!isMobileView && i < 3 && (
+                            <div style={{ position: 'absolute', top: '50%', right: '-15px', width: '30px', height: '1px', background: `linear-gradient(to right, ${item.color}, transparent)`, zIndex: 1 }}></div>
+                        )}
+                    </div>
+                ))}
             </div>
-          ))}
         </div>
 
         {/* CTA */}
         <div style={{ textAlign: "center", marginTop: 8 }}>
           <Link to="/how-it-works" style={{ textDecoration: "none" }}>
             <button style={{
-              padding: "14px 32px", borderRadius: 12, border: "none",
-              background: "linear-gradient(135deg, #00e5a0, #0095ff)",
-              color: "#06080d", fontWeight: 700, fontSize: 14,
+              padding: "16px 40px", borderRadius: "15px", border: "none",
+              background: "rgba(255,255,255,0.05)",
+              border: '1px solid rgba(255,255,255,0.1)',
+              color: "#fff", fontWeight: 800, fontSize: '12px',
               cursor: "pointer", fontFamily: "inherit",
-            }}>⚡ See How TRINETRA Protects You →</button>
+              letterSpacing: '2px',
+              textTransform: 'uppercase',
+              transition: '0.3s'
+            }} onMouseEnter={e => { e.currentTarget.style.background = '#fff'; e.currentTarget.style.color = '#000'; }}>
+               EXPLORE ARCHITECTURE →
+            </button>
           </Link>
         </div>
       </section>
 
       {/* ── Safety Score ── */}
-      <section className="landing-safety-score" style={{ padding: "100px 48px", background: "linear-gradient(180deg, var(--bg) 0%, var(--bg2) 100%)" }}>
+      <section className="landing-safety-score" style={{
+        padding: isMobileView ? "120px 20px 60px" : "100px 48px",
+        background: "linear-gradient(180deg, var(--bg) 0%, var(--bg2) 100%)"
+      }}>
         <div className="landing-section-header" style={{ maxWidth: 800, margin: "0 auto 60px", textAlign: "center" }}>
           <div className="landing-section-tag">Instant Analysis</div>
           <h2 className="gradient-text">Safety Readiness Calculator</h2>
           <p>How prepared are you for emergencies? Check your safety score in 30 seconds.</p>
         </div>
-        <div style={{ maxWidth: 600, margin: "0 auto", background: "var(--glass)", border: "1px solid var(--border)", borderRadius: 30, padding: "40px", backdropFilter: "blur(40px)" }}>
+        <div style={{
+          maxWidth: 600,
+          margin: "0 auto",
+          background: "var(--glass)",
+          border: "1px solid var(--border)",
+          borderRadius: 24,
+          padding: isMobileView ? "24px" : "40px",
+          backdropFilter: "blur(40px)"
+        }}>
           {[
             { label: "Emergency Contacts added?", weight: 25 },
             { label: "SOS Shake feature enabled?", weight: 25 },
@@ -427,17 +586,38 @@ export default function Landing() {
             { label: "Safe route notifications on?", weight: 15 },
             { label: "Phone charged above 50%?", weight: 15 },
           ].map((item, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-              <span style={{ fontSize: 15, color: "var(--text2)" }}>{item.label}</span>
-              <div style={{ width: 50, height: 26, background: "rgba(255,255,255,0.05)", borderRadius: 50, padding: 3, cursor: "pointer", display: "flex", justifyContent: "flex-end", border: "1px solid var(--border)" }}>
-                <div style={{ width: 20, height: 20, background: "var(--accent)", borderRadius: 50, boxShadow: "0 0 10px var(--accent)" }} />
+            <div key={i} style={{ 
+                display: "flex", 
+                alignItems: "center", 
+                justifyContent: "space-between", 
+                marginBottom: 20,
+                padding: '15px',
+                background: 'rgba(255,255,255,0.02)',
+                borderRadius: '15px',
+                border: '1px solid rgba(255,255,255,0.05)'
+            }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.6)", letterSpacing: '0.5px' }}>{item.label}</span>
+              <div style={{ 
+                  width: 44, 
+                  height: 22, 
+                  background: "#00e5a0", 
+                  borderRadius: 50, 
+                  padding: 3, 
+                  cursor: "pointer", 
+                  display: "flex", 
+                  justifyContent: "flex-end", 
+                  boxShadow: '0 0 15px rgba(0,229,160,0.3)'
+              }}>
+                <div style={{ width: 16, height: 16, background: "#000", borderRadius: 50 }} />
               </div>
             </div>
           ))}
-          <div style={{ borderTop: "1px solid var(--border)", marginTop: 30, paddingTop: 30, textAlign: "center" }}>
-            <div style={{ fontSize: 12, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 10 }}>Your Safety Score</div>
-            <div style={{ fontSize: 64, fontWeight: 800, color: "var(--accent)", textShadow: "0 0 30px rgba(0,229,160,0.3)" }}>100%</div>
-            <p style={{ fontSize: 14, color: "var(--text3)", marginTop: 10 }}>Excellent! You are fully protected by TRINETRA.</p>
+          <div style={{ borderTop: "1px solid rgba(255,255,255,0.05)", marginTop: 30, paddingTop: 30, textAlign: "center" }}>
+            <div style={{ position: 'relative', display: 'inline-block' }}>
+                <div style={{ fontSize: isMobileView ? 48 : 64, fontWeight: 900, color: "#00e5a0", textShadow: "0 0 30px rgba(0,229,160,0.5)", letterSpacing: '-2px' }}>100%</div>
+                <div style={{ fontSize: '10px', fontWeight: 900, color: '#00e5a0', letterSpacing: '3px', marginTop: '-5px' }}>READY_FOR_DEPLOYMENT</div>
+            </div>
+            <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 20, fontWeight: 500 }}>Excellent! You are fully protected by TRINETRA Global Intelligence.</p>
           </div>
         </div>
       </section>
@@ -561,6 +741,77 @@ export default function Landing() {
       {/* Scroll to Top */}
       <button className={`scroll-top-btn ${showScrollTop ? 'visible' : ''}`} onClick={scrollToTop}>↑</button>
 
+      {/* Floating Emergency Button */}
+      <button onClick={() => setShowReportModal(true)} style={{ position: 'fixed', bottom: '30px', left: '30px', width: '64px', height: '64px', background: '#ff4d4d', color: '#fff', borderRadius: '50%', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', cursor: 'pointer', zHash: 1000, boxShadow: '0 10px 30px rgba(255,77,77,0.4)', animation: 'pulse-sos 2s infinite' }}>
+        <FaExclamationTriangle />
+      </button>
+
+      {/* REPORT MODAL */}
+      {showReportModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.92)', backdropFilter: 'blur(20px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, animation: 'fadeIn 0.3s ease', padding: '20px' }}>
+          <div style={{ width: '100%', maxWidth: '420px', background: 'rgba(15,18,25,0.98)', border: '1px solid rgba(255,77,77,0.3)', borderRadius: '24px', padding: isMobileView ? '30px 20px' : '40px', position: 'relative', boxShadow: '0 20px 50px rgba(0,0,0,0.5)' }}>
+            {/* CLOSE BUTTON */}
+            <button onClick={() => setShowReportModal(false)} style={{ position: 'absolute', top: '15px', right: '15px', width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', border: 'none', color: '#fff', fontSize: '18px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: '0.3s' }} onMouseOver={(e) => e.target.style.background = 'rgba(255,77,77,0.2)'} onMouseOut={(e) => e.target.style.background = 'rgba(255,255,255,0.05)'}>×</button>
+
+            <div style={{ textAlign: 'center', marginBottom: '25px' }}>
+              <div style={{ color: '#ff4d4d', marginBottom: '12px' }}><FaExclamationTriangle size={32} /></div>
+              <h3 style={{ fontSize: '20px', fontWeight: 900, letterSpacing: '1px' }}>EMERGENCY BROADCAST</h3>
+              <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)', marginTop: '6px' }}>Signal will be routed to Div-1 & Div-7.</p>
+            </div>
+
+            <form onSubmit={handleFileReport} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+              <div>
+                <label style={{ fontSize: '9px', fontWeight: 900, color: 'rgba(255,255,255,0.4)', letterSpacing: '1px' }}>EMERGENCY TYPE</label>
+                <select
+                  value={reportForm.type}
+                  onChange={(e) => setReportForm({ ...reportForm, type: e.target.value })}
+                  style={{ width: '100%', background: 'rgba(30,35,45,1)', border: '1px solid rgba(255,255,255,0.1)', padding: '12px', borderRadius: '10px', color: '#fff', marginTop: '6px', outline: 'none', cursor: 'pointer', fontSize: '13px' }}
+                >
+                  <option value="SOS" style={{ background: '#1a1d24' }}>PHYSICAL EMERGENCY / SOS</option>
+                  <option value="CYBER ABUSE" style={{ background: '#1a1d24' }}>CYBER ABUSE / HARASSMENT</option>
+                  <option value="STALKING" style={{ background: '#1a1d24' }}>STALKING / SUSPICIOUS ACTIVITY</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '9px', fontWeight: 900, color: 'rgba(255,255,255,0.4)', letterSpacing: '1px' }}>CURRENT LOCATION</label>
+                <input
+                  placeholder="e.g. Sector 7, Ring Road"
+                  value={reportForm.location}
+                  onChange={(e) => setReportForm({ ...reportForm, location: e.target.value })}
+                  style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', padding: '12px', borderRadius: '10px', color: '#fff', marginTop: '6px', outline: 'none', fontSize: '13px' }}
+                  required
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '9px', fontWeight: 900, color: 'rgba(255,255,255,0.4)', letterSpacing: '1px' }}>SITUATION DETAILS</label>
+                <textarea
+                  placeholder="Brief details..."
+                  value={reportForm.msg}
+                  onChange={(e) => setReportForm({ ...reportForm, msg: e.target.value })}
+                  style={{ width: '100%', height: '80px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', padding: '12px', borderRadius: '10px', color: '#fff', marginTop: '6px', outline: 'none', resize: 'none', fontSize: '13px' }}
+                  required
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={reportStatus.loading}
+                style={{ width: '100%', padding: '16px', background: reportStatus.success ? '#00e5a0' : '#ff4d4d', border: 'none', borderRadius: '12px', color: '#fff', fontWeight: 900, fontSize: '13px', letterSpacing: '1px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', transition: '0.3s', boxShadow: '0 8px 20px rgba(255,77,77,0.2)' }}
+              >
+                {reportStatus.loading ? "BROADCASTING..." : reportStatus.success ? <><FaCheckCircle /> RECEIVED</> : <><FaPaperPlane /> BROADCAST SIGNAL</>}
+              </button>
+
+              <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginTop: '5px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '8px', color: 'rgba(255,255,255,0.3)', fontWeight: 800 }}><FaLock /> ENCRYPTED</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '8px', color: 'rgba(255,255,255,0.3)', fontWeight: 800 }}><FaUserSecret /> ANONYMOUS</div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* ── GET STARTED MODAL ── */}
       {showGetStarted && (
         <div className="gs-overlay" onClick={() => setShowGetStarted(false)}>
@@ -615,6 +866,12 @@ export default function Landing() {
           </div>
         </div>
       )}
+      {/* ── WOMEN SAFETY FLOW MODAL ── */}
+      <HowItWorksWomenModal 
+        isOpen={showWomenFlow} 
+        onClose={() => setShowWomenFlow(false)} 
+      />
+
     </div>
   );
 }

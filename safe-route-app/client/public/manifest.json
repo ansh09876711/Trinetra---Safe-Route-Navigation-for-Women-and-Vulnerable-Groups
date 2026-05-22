@@ -1,6 +1,7 @@
 {
   "short_name": "TRINETRA",
-  "name": "TRINETRA — Eye of Safety for Women",
+  "name": "TRINETRA — Eye of Safety",
+  "description": "Safe Route Navigation for Women and Vulnerable Groups",
   "icons": [
     {
       "src": "favicon.ico",
@@ -10,16 +11,21 @@
     {
       "src": "logo192.png",
       "type": "image/png",
-      "sizes": "192x192"
+      "sizes": "192x192",
+      "purpose": "any maskable"
     },
     {
       "src": "logo512.png",
       "type": "image/png",
-      "sizes": "512x512"
+      "sizes": "512x512",
+      "purpose": "any maskable"
     }
   ],
-  "start_url": ".",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "portrait",
   "theme_color": "#0a0c10",
-  "background_color": "#0a0c10"
+  "background_color": "#0a0c10",
+  "categories": ["navigation", "utilities", "lifestyle"]
 }

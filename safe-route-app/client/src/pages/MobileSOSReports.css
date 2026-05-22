@@ -1,0 +1,206 @@
+/* ── TRINETRA Mobile SOS Reports CSS ── */
+.mobile-reports-root {
+  --bg: #06080d;
+  --bg2: #0e1119;
+  --bg3: rgba(255, 255, 255, 0.04);
+  --accent: #4285F4;
+  --danger: #ff4d4d;
+  --text: #e8eaf0;
+  --text2: rgba(255, 255, 255, 0.7);
+  --text3: rgba(255, 255, 255, 0.4);
+  --border: rgba(255, 255, 255, 0.08);
+
+  height: 100vh;
+  height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Space Grotesk', sans-serif;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Header ── */
+.mob-rep-header {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: rgba(10, 12, 18, 0.85);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--border);
+  z-index: 1000;
+  flex-shrink: 0;
+}
+
+/* ── Content ── */
+.mob-rep-content {
+  flex: 1;
+  padding: 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-bottom: 100px;
+}
+
+.mob-rep-title {
+  font-size: 20px;
+  font-weight: 800;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* ── List Items ── */
+.mob-report-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+
+.mob-report-card:active {
+  transform: scale(0.97);
+  background: var(--bg3);
+}
+
+.mob-report-icon {
+  width: 48px;
+  height: 48px;
+  background: rgba(66, 133, 244, 0.1);
+  color: var(--accent);
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+}
+
+.mob-report-main {
+  flex: 1;
+}
+
+.mob-report-id {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text3);
+  text-transform: uppercase;
+}
+
+.mob-report-name {
+  font-size: 15px;
+  font-weight: 700;
+  margin-top: 2px;
+}
+
+.mob-report-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text3);
+}
+
+/* ── Detail View Overlay ── */
+.mob-rep-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.95);
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  padding: 30px 20px;
+  backdrop-filter: blur(25px);
+}
+
+.mob-rep-detail-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.mob-audit-badge {
+  width: 80px;
+  height: 80px;
+  background: rgba(0, 229, 160, 0.1);
+  color: #00e5a0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  margin-bottom: 24px;
+  box-shadow: 0 0 30px rgba(0, 229, 160, 0.2);
+}
+
+.mob-audit-title {
+  font-size: 24px;
+  font-weight: 800;
+  margin-bottom: 12px;
+}
+
+.mob-audit-desc {
+  font-size: 14px;
+  color: var(--text2);
+  line-height: 1.6;
+  max-width: 280px;
+  margin-bottom: 32px;
+}
+
+.mob-audit-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.mob-btn-primary {
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 16px;
+  border-radius: 16px;
+  font-weight: 700;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.mob-btn-danger {
+  background: rgba(255, 77, 77, 0.1);
+  color: #ff4d4d;
+  border: 1px solid rgba(255, 77, 77, 0.2);
+  padding: 16px;
+  border-radius: 16px;
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.mob-btn-close {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+}

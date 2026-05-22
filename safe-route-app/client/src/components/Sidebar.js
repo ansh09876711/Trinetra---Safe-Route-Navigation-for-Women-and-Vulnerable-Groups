@@ -18,6 +18,7 @@ const Sidebar = ({ isOpen, onClose, user, onLogout }) => {
     { to: "/stations", icon: "🚉", label: "Safe Stations" },
     { to: "/taxi", icon: "🚕", label: "Safe Taxi" },
     { to: "/reports", icon: "📄", label: "SOS Reports" },
+    { to: "/citizen-report", icon: "📋", label: "Report Incident" },
     { to: "/profile", icon: "👤", label: "Profile" },
   ];
 

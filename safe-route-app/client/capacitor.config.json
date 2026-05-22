@@ -1,0 +1,19 @@
+{
+  "appId": "com.trinetra.app",
+  "appName": "TRINETRA",
+  "webDir": "build",
+  "server": {
+    "cleartext": true,
+    "androidScheme": "http"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 2000,
+      "backgroundColor": "#0a0c10",
+      "showSpinner": false
+    }
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}

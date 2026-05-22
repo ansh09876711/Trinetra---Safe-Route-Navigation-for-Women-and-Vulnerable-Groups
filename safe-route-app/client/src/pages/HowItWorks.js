@@ -1,356 +1,364 @@
 import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { 
+  FaUserPlus, FaUsers, FaMapMarkedAlt, FaRoute, 
+  FaShieldAlt, FaExclamationTriangle, FaTaxi, FaChartLine,
+  FaChevronLeft, FaArrowRight, FaLock
+} from "react-icons/fa";
 import Logo from "../components/Logo";
 
 const STEPS = [
   {
-    id: 1, icon: "📱", color: "#00e5a0", bg: "rgba(0,229,160,0.12)", border: "rgba(0,229,160,0.3)",
-    title: "Register / Login",
-    desc: "Create your TRINETRA account with your name, email & phone. Takes less than 2 minutes.",
-    sub: ["Fill your name & phone", "Set a secure password", "Verify your mobile number"],
-    link: "/register", linkLabel: "Register Now →",
+    id: 1, icon: <FaUserPlus />, color: "#00e5a0", department: "REGISTRATION",
+    title: "Secure Onboarding",
+    desc: "Establish your encrypted profile within the TRINETRA ecosystem using 256-bit identity verification.",
+    sub: ["Biometric Linkage", "Identity Masking", "OTP Verification"],
+    link: "/register"
   },
   {
-    id: 2, icon: "👥", color: "#4285F4", bg: "rgba(66,133,244,0.12)", border: "rgba(66,133,244,0.3)",
-    title: "Add Trusted Contacts",
-    desc: "Add family members or friends who will be auto-alerted during emergencies.",
-    sub: ["Add up to 5 contacts", "Save emergency SMS message", "Contacts get live location link"],
-    link: "/sos", linkLabel: "Manage Contacts →",
+    id: 2, icon: <FaUsers />, color: "#4285F4", department: "GUARDIANS",
+    title: "Circle of Trust",
+    desc: "Designate up to 5 tactical contacts who receive instant telemetry during emergency events.",
+    sub: ["Real-time Sync", "Direct SMS Fallback", "Encrypted Links"],
+    link: "/sos"
   },
   {
-    id: 3, icon: "📍", color: "#fbbc04", bg: "rgba(251,188,4,0.12)", border: "rgba(251,188,4,0.3)",
-    title: "Enable GPS & Dashboard",
-    desc: "Allow location access. Your live position appears on the interactive safety map.",
-    sub: ["Real-time GPS tracking", "View safe/danger zones", "Offline map tiles cached"],
-    link: "/dashboard", linkLabel: "Open Dashboard →",
+    id: 3, icon: <FaMapMarkedAlt />, color: "#fbbc04", department: "TELEMETRY",
+    title: "Live GPS Matrix",
+    desc: "Activate your situational awareness. Your coordinates are mapped against the city's risk grid.",
+    sub: ["Live Tracking", "Safe Zone Mapping", "Risk Heatmaps"],
+    link: "/dashboard"
   },
   {
-    id: 4, icon: "🗺️", color: "#0095ff", bg: "rgba(0,149,255,0.12)", border: "rgba(0,149,255,0.3)",
-    title: "Navigate Safely",
-    desc: "Get turn-by-turn voice navigation avoiding high-risk areas. Works offline too.",
-    sub: ["Search any destination", "Voice-guided directions", "Safe route algorithm"],
-    link: "/dashboard", linkLabel: "Start Navigation →",
+    id: 4, icon: <FaRoute />, color: "#0095ff", department: "NAVIGATION",
+    title: "Tactical Routing",
+    desc: "Our AI calculates paths through high-visibility areas, avoiding dimly lit or high-crime sectors.",
+    sub: ["AI Pathfinding", "Voice HUD", "Offline Routing"],
+    link: "/dashboard"
   },
   {
-    id: 5, icon: "🚉", color: "#a855f7", bg: "rgba(168,85,247,0.12)", border: "rgba(168,85,247,0.3)",
-    title: "Find Nearby Safe Stations",
-    desc: "Instantly see police stations, hospitals & fire stations near your current location.",
-    sub: ["Sorted by distance", "Real data from OpenStreetMap", "Call or SMS directly"],
-    link: "/stations", linkLabel: "View Stations →",
+    id: 5, icon: <FaShieldAlt />, color: "#a855f7", department: "STATIONS",
+    title: "Safety Node Locator",
+    desc: "Instant access to the nearest authorized safety nodes including Police and medical facilities.",
+    sub: ["Sorted by Distance", "Direct Command Link", "One-Tap SOS"],
+    link: "/stations"
   },
   {
-    id: 6, icon: "🆘", color: "#ff4d4d", bg: "rgba(255,77,77,0.12)", border: "rgba(255,77,77,0.3)",
-    title: "SOS Emergency Alert",
-    desc: "One tap (or shake your phone) to send live location SMS to all trusted contacts.",
-    sub: ["Shake-to-SOS gesture", "Auto calls first contact", "Police siren sound plays"],
-    link: "/sos", linkLabel: "SOS Setup →",
+    id: 6, icon: <FaExclamationTriangle />, color: "#ff4d4d", department: "SOS_RESPONSE",
+    title: "Critical SOS Signal",
+    desc: "Trigger a high-priority emergency broadcast via hardware gesture or silent voice activation.",
+    sub: ["Shake-to-SOS", "Silent Safe Word", "120dB Siren"],
+    link: "/sos"
   },
   {
-    id: 7, icon: "🚕", color: "#ff8c00", bg: "rgba(255,140,0,0.12)", border: "rgba(255,140,0,0.3)",
-    title: "Book Safe Taxi",
-    desc: "Find verified, TRINETRA-rated taxi drivers with tracked rides and shared trip links.",
-    sub: ["Verified driver profiles", "Share ride with contacts", "Rate driver after trip"],
-    link: "/taxi", linkLabel: "Book Taxi →",
+    id: 7, icon: <FaTaxi />, color: "#ff8c00", department: "TRANSIT",
+    title: "Safe Taxi Protocol",
+    desc: "Engage with verified transit partners. Every ride is monitored by the TRINETRA Command Center.",
+    sub: ["Verified Driver ID", "Ride Monitoring", "Trip Sharing"],
+    link: "/taxi"
   },
   {
-    id: 8, icon: "📊", color: "#06b6d4", bg: "rgba(6,182,212,0.12)", border: "rgba(6,182,212,0.3)",
-    title: "Safety Analytics",
-    desc: "View your safety history, SOS logs, and route patterns. Stay informed.",
-    sub: ["SOS & trip history", "Safety score trends", "Area risk heatmap"],
-    link: "/analytics", linkLabel: "View Analytics →",
+    id: 8, icon: <FaChartLine />, color: "#06b6d4", department: "ANALYTICS",
+    title: "Intelligence Center",
+    desc: "Review detailed safety metrics and historical data to optimize your travel patterns.",
+    sub: ["Safety Score Trends", "Historical Logs", "Threat Analytics"],
+    link: "/analytics"
   },
-];
-
-const CONNECTIONS = [
-  { from: 1, to: 2 }, { from: 2, to: 3 }, { from: 3, to: 4 },
-  { from: 4, to: 5 }, { from: 5, to: 6 }, { from: 6, to: 7 }, { from: 7, to: 8 },
+  {
+    id: 9, icon: <FaLock />, color: "#f43f5e", department: "CYBER_MESH",
+    title: "Neural Threat Detection",
+    desc: "Advanced AI monitors for unusual deviations in travel behavior and environmental stress.",
+    sub: ["Behavioral Analysis", "Stress Patterning", "Auto-De-escalation"],
+    link: "/analytics"
+  },
+  {
+    id: 10, icon: <FaShieldAlt />, color: "#fbbf24", department: "INFRASTRUCTURE",
+    title: "Encrypted Data Mesh",
+    desc: "All telemetry is synced across a decentralized network ensuring 99.9% uptime for SOS signals.",
+    sub: ["Decentralized Sync", "Zero-Knowledge Proofs", "Priority Bandwidth"],
+    link: "/dashboard"
+  },
+  {
+    id: 11, icon: <FaMapMarkedAlt />, color: "#8b5cf6", department: "SATELLITE",
+    title: "Satellite Overwatch",
+    desc: "High-resolution satellite positioning provides precise tracking even in low-signal metropolitan areas.",
+    sub: ["GNSS Integration", "Sub-Meter Accuracy", "Atmospheric Correction"],
+    link: "/dashboard"
+  },
+  {
+    id: 12, icon: <FaUsers />, color: "#ec4899", department: "COMMUNITY",
+    title: "Guardian Network",
+    desc: "Crowdsourced safety intel from 50,000+ verified TRINETRA users creates a live human safety net.",
+    sub: ["Live Reports", "Area Verifications", "Local Help Hubs"],
+    link: "/community"
+  },
+  {
+    id: 13, icon: <FaShieldAlt />, color: "#10b981", department: "FALLBACK",
+    title: "Offline SOS Protocol",
+    desc: "Zero-data emergency activation via high-priority cellular SMS gateway with GPS payload.",
+    sub: ["No Data Required", "SMS Fallback", "Satellite Messaging"],
+    link: "/sos"
+  },
+  {
+    id: 14, icon: <FaLock />, color: "#3b82f6", department: "ARCHIVE",
+    title: "Secure Legal Vault",
+    desc: "Emergency evidence (audio/location) is stored in a court-admissible, encrypted legal vault.",
+    sub: ["Chain of Custody", "Immutable Logs", "Evidence Export"],
+    link: "/analytics"
+  }
 ];
 
 export default function HowItWorks() {
-  const [visible, setVisible] = useState(new Set());
-  const [activeStep, setActiveStep] = useState(null);
-
+  const [visibleSteps, setVisibleSteps] = useState([]);
+  const [isMobileView, setIsMobileView] = useState(window.innerWidth < 900);
+  
   useEffect(() => {
-    // Stagger reveal each card
-    STEPS.forEach((s, i) => {
-      setTimeout(() => setVisible(prev => new Set([...prev, s.id])), 150 + i * 120);
-    });
+    const handleResize = () => setIsMobileView(window.innerWidth < 900);
+    window.addEventListener('resize', handleResize);
+    
+    const timer = setInterval(() => {
+      setVisibleSteps(prev => {
+        if (prev.length < STEPS.length) return [...prev, STEPS[prev.length]];
+        return prev;
+      });
+    }, 200);
+    
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('resize', handleResize);
+    };
   }, []);
 
   return (
     <div style={{
       minHeight: "100vh",
-      background: "var(--bg, #06080d)",
-      color: "var(--text, #e8eaf0)",
-      fontFamily: "'Inter', 'Space Grotesk', sans-serif",
+      background: "radial-gradient(circle at top right, #0a0f1a, #02040a)",
+      color: "#fff",
+      fontFamily: "'Space Grotesk', sans-serif",
+      paddingBottom: '100px'
     }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap');
-        :root { --bg:#06080d; --bg2:#0d1117; --bg3:#161b22; --text:#e8eaf0; --text2:#9ca3b0; --text3:#5c6370; --accent:#00e5a0; --border:rgba(255,255,255,0.08); }
-        @keyframes fadeSlideUp { from { opacity:0; transform:translateY(24px); } to { opacity:1; transform:translateY(0); } }
-        @keyframes pulse-dot { 0%,100%{transform:scale(1);opacity:1;} 50%{transform:scale(1.4);opacity:0.6;} }
-        @keyframes flow { 0%{stroke-dashoffset:200;} 100%{stroke-dashoffset:0;} }
-        .hiw-card { transition: transform 0.25s ease, box-shadow 0.25s ease; }
-        .hiw-card:hover { transform: translateY(-4px); box-shadow: 0 20px 60px rgba(0,0,0,0.4); }
-        .connector-line { stroke-dasharray: 200; stroke-dashoffset: 200; animation: flow 1s ease forwards; }
-        @media (max-width: 700px) {
-          .hiw-grid { grid-template-columns: 1fr !important; }
-          .hiw-connector { display: none !important; }
-        }
+        @keyframes slideIn { from { opacity: 0; transform: translateX(-30px); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes glowPulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.8; } }
+        .timeline-line { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: linear-gradient(to bottom, transparent, rgba(0,229,160,0.2), transparent); }
+        @media (max-width: 900px) { .timeline-line { left: 30px; } }
       `}</style>
 
-      {/* Topbar */}
+      {/* FIXED TOPBAR */}
       <header style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "16px 32px", borderBottom: "1px solid rgba(255,255,255,0.06)",
+        padding: "15px 40px", borderBottom: "1px solid rgba(255,255,255,0.05)",
         position: "sticky", top: 0, zIndex: 100,
-        background: "rgba(6,8,13,0.9)", backdropFilter: "blur(20px)",
+        background: "rgba(2,4,10,0.8)", backdropFilter: "blur(20px)",
       }}>
-        <Link to="/" style={{ textDecoration: "none" }}><Logo height={28} /></Link>
-        <div style={{ display: "flex", gap: 12 }}>
+        <Logo height={30} />
+        <div style={{ display: "flex", gap: '15px' }}>
           <Link to="/" style={{ textDecoration: "none" }}>
-            <button style={{
-              padding: "8px 18px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.1)",
-              background: "none", color: "var(--text2)", cursor: "pointer", fontSize: 13, fontFamily: "inherit",
-            }}>← Back</button>
+            <button style={{ padding: "10px 20px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.1)", background: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: '11px', fontWeight: 900, letterSpacing: '1px' }}>
+              <FaChevronLeft style={{ marginRight: '8px' }} /> BACK
+            </button>
           </Link>
           <Link to="/register" style={{ textDecoration: "none" }}>
-            <button style={{
-              padding: "8px 18px", borderRadius: 8, border: "none",
-              background: "var(--accent)", color: "#06080d", cursor: "pointer",
-              fontSize: 13, fontWeight: 700, fontFamily: "inherit",
-            }}>Get Started →</button>
+            <button style={{ padding: "10px 20px", borderRadius: "10px", border: "none", background: "#00e5a0", color: "#000", cursor: "pointer", fontSize: '11px', fontWeight: 900, letterSpacing: '1px' }}>
+              GET STARTED <FaArrowRight style={{ marginLeft: '8px' }} />
+            </button>
           </Link>
         </div>
       </header>
 
-      {/* Hero */}
-      <section style={{ textAlign: "center", padding: "72px 24px 48px", maxWidth: 760, margin: "0 auto" }}>
-        <div style={{
-          display: "inline-flex", alignItems: "center", gap: 8,
-          padding: "6px 16px", borderRadius: 99,
-          background: "rgba(0,229,160,0.08)", border: "1px solid rgba(0,229,160,0.2)",
-          fontSize: 12, color: "var(--accent)", fontWeight: 600,
-          marginBottom: 24, letterSpacing: "0.05em",
-        }}>
-          <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--accent)", animation: "pulse-dot 1.5s infinite", display: "inline-block" }} />
-          PLATFORM WALKTHROUGH
+      {/* HERO SECTION */}
+      <section style={{ textAlign: "center", padding: "80px 20px", position: 'relative' }}>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', padding: '8px 20px', borderRadius: '50px', background: 'rgba(0, 229, 160, 0.05)', border: '1px solid rgba(0, 229, 160, 0.2)', marginBottom: '30px' }}>
+            <div style={{ width: '6px', height: '6px', background: '#00e5a0', borderRadius: '50%', boxShadow: '0 0 10px #00e5a0' }}></div>
+            <span style={{ fontSize: '10px', fontWeight: 900, color: '#00e5a0', letterSpacing: '3px' }}>MISSION BRIEFING</span>
         </div>
-        <h1 style={{
-          fontSize: "clamp(2rem, 5vw, 3.2rem)", fontWeight: 800, lineHeight: 1.15,
-          background: "linear-gradient(135deg, #e8eaf0 0%, #00e5a0 60%, #0095ff 100%)",
-          WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-          marginBottom: 20,
-        }}>
-          How TRINETRA Works
+        <h1 style={{ fontSize: 'clamp(2.5rem, 6vw, 4rem)', fontWeight: 900, letterSpacing: '-2px', lineHeight: 1, marginBottom: '20px' }}>
+            The Architecture of <span style={{ color: '#00e5a0' }}>Safety</span>
         </h1>
-        <p style={{ fontSize: 16, color: "var(--text2)", lineHeight: 1.7, maxWidth: 580, margin: "0 auto" }}>
-          A complete step-by-step guide to every feature — from registration to real-time SOS emergency response.
+        <p style={{ fontSize: '16px', color: 'rgba(255,255,255,0.4)', maxWidth: '600px', margin: '0 auto', lineHeight: 1.6 }}>
+            Trinetra is an integrated security ecosystem. Here is a tactical breakdown of how we protect you at every step of your journey.
         </p>
       </section>
 
-      {/* Flowchart */}
-      <section style={{ maxWidth: 1100, margin: "0 auto", padding: "0 24px 100px" }}>
+      {/* HOLOGRAPHIC BLUEPRINT GRID */}
+      <section style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 40px 100px', position: 'relative' }}>
+        
+        {/* SVG DATA FLOWS (Visible on Desktop) */}
+        {!isMobileView && (
+          <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 1, opacity: 0.3 }}>
+            <defs>
+                <linearGradient id="flowGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stopColor="#00e5a0" stopOpacity="0" />
+                    <stop offset="50%" stopColor="#00e5a0" stopOpacity="1" />
+                    <stop offset="100%" stopColor="#00e5a0" stopOpacity="0" />
+                </linearGradient>
+            </defs>
+            {/* Paths connecting nodes (Simplified grid representation) */}
+            <path d="M 300 200 L 900 200 L 900 500 L 300 500 L 300 800 L 900 800" fill="none" stroke="rgba(0, 229, 160, 0.1)" strokeWidth="2" />
+            <circle cx="300" cy="200" r="3" fill="#00e5a0">
+                <animate attributeName="opacity" values="0;1;0" dur="2s" repeatCount="indefinite" />
+            </circle>
+          </svg>
+        )}
 
-        {/* Flow legend */}
-        <div style={{
-          display: "flex", alignItems: "center", gap: 20, marginBottom: 48,
-          justifyContent: "center", flexWrap: "wrap",
-        }}>
-          {[
-            { color: "#00e5a0", label: "Setup" },
-            { color: "#4285F4", label: "Safety Layer" },
-            { color: "#ff4d4d", label: "Emergency" },
-            { color: "#06b6d4", label: "Analytics" },
-          ].map((l, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{ width: 10, height: 10, borderRadius: "50%", background: l.color }} />
-              <span style={{ fontSize: 12, color: "var(--text3)" }}>{l.label}</span>
-            </div>
-          ))}
-        </div>
-
-        {/* Steps Grid */}
-        <div className="hiw-grid" style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(2, 1fr)",
-          gap: 24,
-          position: "relative",
+        <div style={{ 
+            display: 'grid', 
+            gridTemplateColumns: isMobileView ? '1fr' : 'repeat(3, 1fr)', 
+            gap: '30px',
+            position: 'relative',
+            zIndex: 2
         }}>
           {STEPS.map((step, i) => (
-            <div key={step.id} style={{
-              opacity: visible.has(step.id) ? 1 : 0,
-              transform: visible.has(step.id) ? "translateY(0)" : "translateY(24px)",
-              transition: `opacity 0.5s ease ${i * 0.08}s, transform 0.5s ease ${i * 0.08}s`,
+            <div key={step.id} style={{ 
+                opacity: visibleSteps.includes(step) ? 1 : 0,
+                transform: visibleSteps.includes(step) ? 'scale(1)' : 'scale(0.9)',
+                transition: 'all 0.5s ease',
             }}>
-              <div
-                className="hiw-card"
-                onClick={() => setActiveStep(activeStep === step.id ? null : step.id)}
-                style={{
-                  background: "rgba(255,255,255,0.03)",
-                  border: `1px solid ${activeStep === step.id ? step.border : "rgba(255,255,255,0.07)"}`,
-                  borderRadius: 20, padding: "28px",
-                  cursor: "pointer", position: "relative",
-                  boxShadow: activeStep === step.id ? `0 0 40px ${step.bg}` : "none",
-                  transition: "all 0.3s ease",
-                }}
-              >
-                {/* Step number */}
-                <div style={{
-                  position: "absolute", top: 16, right: 16,
-                  fontSize: 11, fontWeight: 700, color: "var(--text3)",
-                  fontFamily: "'JetBrains Mono', monospace",
-                }}>
-                  {String(step.id).padStart(2, "0")}
+              <div style={{ 
+                  background: 'rgba(14, 17, 25, 0.6)', 
+                  border: `1px solid ${step.color}20`,
+                  borderRadius: '24px',
+                  padding: '30px',
+                  height: '100%',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  position: 'relative',
+                  backdropFilter: 'blur(20px)',
+                  transition: '0.3s'
+              }} className="blueprint-node">
+                
+                {/* Node Label */}
+                <div style={{ position: 'absolute', top: '15px', right: '20px', fontSize: '9px', fontWeight: 900, color: step.color, letterSpacing: '2px' }}>
+                    0{step.id} // SECURE_NODE
                 </div>
 
-                {/* Arrow connector to next */}
-                {i < STEPS.length - 1 && (
-                  <div className="hiw-connector" style={{
-                    position: "absolute", bottom: -13, left: "50%",
-                    transform: "translateX(-50%)",
-                    zIndex: 2,
-                    width: 24, height: 24,
-                    background: "var(--bg2)",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    borderRadius: "50%",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 11, color: "var(--text3)",
-                  }}>
-                    {i % 2 === 1 ? "↓" : "→"}
-                  </div>
-                )}
-
-                {/* Icon */}
-                <div style={{
-                  width: 56, height: 56, borderRadius: 16,
-                  background: step.bg, border: `1px solid ${step.border}`,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 26, marginBottom: 16,
+                {/* Hexagon Icon Wrap */}
+                <div style={{ 
+                    width: '50px', 
+                    height: '50px', 
+                    background: `${step.color}15`, 
+                    clipPath: 'polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)',
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center', 
+                    fontSize: '20px', 
+                    color: step.color, 
+                    marginBottom: '20px'
                 }}>
-                  {step.icon}
+                    {step.icon}
                 </div>
 
-                {/* Title */}
-                <h3 style={{
-                  fontSize: 17, fontWeight: 700, color: "var(--text)",
-                  marginBottom: 8,
-                }}>{step.title}</h3>
+                <h3 style={{ fontSize: '18px', fontWeight: 900, color: '#fff', marginBottom: '10px' }}>{step.title}</h3>
+                <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.4)', lineHeight: 1.5, flex: 1, marginBottom: '20px' }}>{step.desc}</p>
+                
+                {/* Tactical Features */}
+                <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '15px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {step.sub.map((s, idx) => (
+                        <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <div style={{ width: '4px', height: '4px', background: step.color, borderRadius: '50%' }}></div>
+                            <span style={{ fontSize: '10px', fontWeight: 700, color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase' }}>{s}</span>
+                        </div>
+                    ))}
+                </div>
 
-                {/* Description */}
-                <p style={{
-                  fontSize: 13, color: "var(--text2)", lineHeight: 1.65, marginBottom: 16,
-                }}>{step.desc}</p>
-
-                {/* Sub-features */}
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
-                  {step.sub.map((s, j) => (
-                    <div key={j} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <div style={{ width: 6, height: 6, borderRadius: "50%", background: step.color, flexShrink: 0 }} />
-                      <span style={{ fontSize: 12, color: "var(--text3)" }}>{s}</span>
+                <Link to={step.link} style={{ textDecoration: 'none', marginTop: '20px' }}>
+                    <div style={{ fontSize: '10px', fontWeight: 900, color: step.color, letterSpacing: '2px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        INITIALIZE PORTAL <FaArrowRight fontSize={8} />
                     </div>
-                  ))}
-                </div>
-
-                {/* CTA Link */}
-                <Link to={step.link} style={{ textDecoration: "none" }}>
-                  <div style={{
-                    display: "inline-flex", alignItems: "center", gap: 6,
-                    fontSize: 12, fontWeight: 600, color: step.color,
-                    padding: "6px 14px",
-                    background: step.bg, border: `1px solid ${step.border}`,
-                    borderRadius: 8,
-                    transition: "opacity 0.2s",
-                  }}>
-                    {step.linkLabel}
-                  </div>
                 </Link>
               </div>
             </div>
           ))}
         </div>
 
-        {/* End node */}
-        <div style={{
-          marginTop: 56, textAlign: "center",
-          padding: "48px 32px",
-          background: "linear-gradient(135deg, rgba(0,229,160,0.06), rgba(0,149,255,0.06))",
-          border: "1px solid rgba(0,229,160,0.15)",
-          borderRadius: 24,
-          maxWidth: 640, marginLeft: "auto", marginRight: "auto",
-        }}>
-          <div style={{ fontSize: 40, marginBottom: 16 }}>🛡️</div>
-          <h2 style={{
-            fontSize: 24, fontWeight: 800,
-            background: "linear-gradient(135deg, #00e5a0, #0095ff)",
-            WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-            marginBottom: 12,
-          }}>You're Fully Protected</h2>
-          <p style={{ fontSize: 14, color: "var(--text2)", lineHeight: 1.7, marginBottom: 28 }}>
-            TRINETRA runs 24/7 in the background — monitoring, protecting, and ready to respond in any emergency.
-          </p>
-          <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-            <Link to="/register" style={{ textDecoration: "none" }}>
-              <button style={{
-                padding: "12px 28px", borderRadius: 10, border: "none",
-                background: "linear-gradient(135deg, #00e5a0, #0095ff)",
-                color: "#06080d", fontWeight: 700, fontSize: 14,
-                cursor: "pointer", fontFamily: "inherit",
-              }}>🚀 Get Started Free</button>
-            </Link>
-            <Link to="/dashboard" style={{ textDecoration: "none" }}>
-              <button style={{
-                padding: "12px 28px", borderRadius: 10,
-                border: "1px solid rgba(255,255,255,0.1)",
-                background: "rgba(255,255,255,0.04)",
-                color: "var(--text2)", fontWeight: 600, fontSize: 14,
-                cursor: "pointer", fontFamily: "inherit",
-              }}>🗺️ Open Dashboard</button>
-            </Link>
-          </div>
+        {/* --- TACTICAL ESCALATION PROTOCOL --- */}
+        <div style={{ marginTop: '80px' }}>
+            <div style={{ textAlign: 'center', marginBottom: '40px' }}>
+                <h3 style={{ fontSize: '22px', fontWeight: 900 }}>Tactical Escalation Protocol</h3>
+                <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.4)', marginTop: '8px' }}>Response hierarchy based on incident severity</p>
+            </div>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: isMobileView ? '1fr' : 'repeat(4, 1fr)', gap: '15px' }}>
+                {[
+                    { level: "LVL_01", status: "MONITORING", color: "#00e5a0", desc: "Standard GPS drift monitoring & safe route guidance active." },
+                    { level: "LVL_02", status: "ALERT", color: "#fbbf24", desc: "Anomalous movement detected. Guardian contacts notified of status." },
+                    { level: "LVL_03", status: "EMERGENCY", color: "#f43f5e", desc: "SOS triggered. Police dispatch & active location broadcast enabled." },
+                    { level: "LVL_04", status: "RECOVERY", color: "#4285F4", desc: "Post-event support. Legal vault locking & medical routing active." }
+                ].map((p, i) => (
+                    <div key={i} style={{ 
+                        background: 'rgba(255,255,255,0.02)', 
+                        padding: '25px', 
+                        borderRadius: '20px', 
+                        border: `1px solid ${p.color}30`,
+                        textAlign: 'center'
+                    }}>
+                        <div style={{ fontSize: '10px', fontWeight: 900, color: p.color, marginBottom: '10px' }}>{p.level}</div>
+                        <div style={{ fontSize: '14px', fontWeight: 900, color: '#fff', marginBottom: '15px', letterSpacing: '1px' }}>{p.status}</div>
+                        <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.3)', lineHeight: 1.6 }}>{p.desc}</p>
+                    </div>
+                ))}
+            </div>
         </div>
 
-        {/* Feature Summary Table */}
-        <div style={{ marginTop: 72 }}>
-          <h2 style={{ textAlign: "center", fontSize: 20, fontWeight: 700, color: "var(--text)", marginBottom: 32 }}>
-            All Features at a Glance
-          </h2>
-          <div style={{
-            border: "1px solid rgba(255,255,255,0.08)",
-            borderRadius: 16, overflow: "hidden",
-          }}>
-            {[
-              { feature: "Live GPS Tracking", desc: "Real-time position on interactive map", status: "✅ Active", link: "/dashboard" },
-              { feature: "Voice Navigation", desc: "Turn-by-turn audio directions", status: "✅ Active", link: "/dashboard" },
-              { feature: "SOS Emergency", desc: "Shake or tap to alert contacts", status: "✅ Active", link: "/sos" },
-              { feature: "Police Siren", desc: "Loud deterrent sound on your phone", status: "✅ Active", link: "/sos" },
-              { feature: "Safe Stations", desc: "Nearby police, hospitals, fire stations", status: "✅ Active", link: "/stations" },
-              { feature: "Safe Taxi", desc: "Verified drivers with trip tracking", status: "✅ Active", link: "/taxi" },
-              { feature: "Safety Analytics", desc: "History, trends & safety score", status: "✅ Active", link: "/analytics" },
-              { feature: "Offline Map", desc: "Map tiles cached for offline use", status: "✅ Active", link: "/dashboard" },
-              { feature: "Shake-to-SOS", desc: "Hardware gesture emergency trigger", status: "✅ Active", link: "/sos" },
-              { feature: "Trusted Contacts", desc: "Emergency contact management", status: "✅ Active", link: "/sos" },
-            ].map((row, i) => (
-              <Link key={i} to={row.link} style={{ textDecoration: "none" }}>
-                <div style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between",
-                  padding: "14px 20px",
-                  background: i % 2 === 0 ? "rgba(255,255,255,0.02)" : "transparent",
-                  borderBottom: i < 9 ? "1px solid rgba(255,255,255,0.05)" : "none",
-                  transition: "background 0.2s",
-                  flexWrap: "wrap", gap: 8,
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{row.feature}</span>
-                    <span style={{ fontSize: 11, color: "var(--text3)" }}>{row.desc}</span>
-                  </div>
-                  <span style={{ fontSize: 12, color: "#00e5a0", fontWeight: 600 }}>{row.status}</span>
+        {/* --- SYSTEM INTEGRITY REPORT --- */}
+        <div style={{ marginTop: '80px', padding: '40px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '30px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' }}>
+                <h3 style={{ fontSize: '18px', fontWeight: 900, letterSpacing: '1px' }}>SYSTEM_INTEGRITY_REPORT</h3>
+                <div style={{ padding: '4px 12px', background: 'rgba(0, 229, 160, 0.1)', color: '#00e5a0', borderRadius: '4px', fontSize: '10px', fontWeight: 900 }}>v4.2.0_STABLE</div>
+            </div>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: isMobileView ? '1fr' : 'repeat(4, 1fr)', gap: '20px' }}>
+                {[
+                    { label: "Signal Latency", value: "0.42ms", sub: "Ultra-low response", color: "#00e5a0" },
+                    { label: "Active Safety Nodes", value: "1,248", sub: "Across city mesh", color: "#4285F4" },
+                    { label: "Encryption Strength", value: "AES-256", sub: "Quantum resistant", color: "#f43f5e" },
+                    { label: "Network Uptime", value: "99.99%", sub: "High availability", color: "#fbbf24" }
+                ].map((stat, i) => (
+                    <div key={i} style={{ borderLeft: `2px solid ${stat.color}`, paddingLeft: '15px' }}>
+                        <div style={{ fontSize: '10px', fontWeight: 700, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', marginBottom: '5px' }}>{stat.label}</div>
+                        <div style={{ fontSize: '24px', fontWeight: 900, color: '#fff', marginBottom: '2px' }}>{stat.value}</div>
+                        <div style={{ fontSize: '10px', color: stat.color, fontWeight: 700 }}>{stat.sub}</div>
+                    </div>
+                ))}
+            </div>
+        </div>
+
+        {/* --- CENTRAL SECURITY CORE --- */}
+        <div style={{ 
+            marginTop: '80px', 
+            background: 'radial-gradient(circle at center, rgba(0, 229, 160, 0.05) 0%, transparent 70%)',
+            border: '1px solid rgba(0, 229, 160, 0.1)',
+            borderRadius: '40px',
+            padding: '60px 40px',
+            textAlign: 'center'
+        }}>
+            <div style={{ position: 'relative', width: '100px', height: '100px', margin: '0 auto 30px' }}>
+                <div style={{ position: 'absolute', inset: 0, border: '2px dashed #00e5a0', borderRadius: '50%', animation: 'spin 10s linear infinite', opacity: 0.3 }}></div>
+                <div style={{ position: 'absolute', inset: '10px', background: 'rgba(0, 229, 160, 0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '32px', color: '#00e5a0' }}>
+                    <FaLock />
                 </div>
-              </Link>
-            ))}
-          </div>
+            </div>
+            <h2 style={{ fontSize: '28px', fontWeight: 900, marginBottom: '15px' }}>GLOBAL SECURITY CORE</h2>
+            <p style={{ fontSize: '14px', color: 'rgba(255,255,255,0.3)', maxWidth: '500px', margin: '0 auto 40px', lineHeight: 1.6 }}>
+                All nodes are linked to the Trinetra Global Security Core, ensuring sub-second response times across the entire network.
+            </p>
+            <Link to="/register" style={{ textDecoration: 'none' }}>
+                <button style={{ padding: '16px 40px', borderRadius: '15px', background: '#00e5a0', color: '#000', fontWeight: 900, border: 'none', cursor: 'pointer', letterSpacing: '1px', boxShadow: '0 10px 30px rgba(0, 229, 160, 0.3)' }}>
+                    GET STARTED
+                </button>
+            </Link>
         </div>
       </section>
+
+      <style>{`
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .blueprint-node:hover {
+            background: rgba(14, 17, 25, 0.8);
+            border-color: rgba(255,255,255,0.2);
+            transform: translateY(-5px);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+        }
+      `}</style>
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { useTheme } from '../context/ThemeContext';
 import { FaPrint, FaTrash, FaFileInvoice, FaShieldAlt, FaMapMarkerAlt, FaClock, FaChevronRight, FaBars, FaBell, FaDownload, FaCheckCircle, FaQrcode } from 'react-icons/fa';
 import Logo from '../components/Logo';
 import Sidebar from '../components/Sidebar';
+import MobileSOSReports from './MobileSOSReports';
 import './Dashboard.css';
 
 const SOSReports = () => {
@@ -12,6 +13,13 @@ const SOSReports = () => {
   const [selectedReport, setSelectedReport] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+  useEffect(() => {
+    const checkRes = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', checkRes);
+    return () => window.removeEventListener('resize', checkRes);
+  }, []);
 
   const loggedInUser = JSON.parse(localStorage.getItem('trinetra_user') || '{}');
 
@@ -167,6 +175,10 @@ const SOSReports = () => {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   };
+
+  if (isMobile) {
+    return <MobileSOSReports user={loggedInUser} onLogout={() => { localStorage.removeItem("trinetra_user"); window.location.href = "/"; }} />;
+  }
 
   return (
     <div className={`nr-root ${dark ? 'dark' : 'light'}`} style={{ background: 'var(--bg1)', minHeight: '100vh' }}>
